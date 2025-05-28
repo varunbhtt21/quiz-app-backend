@@ -236,6 +236,86 @@ def get_contest(
     )
 
 
+@router.put("/{contest_id}", response_model=ContestResponse)
+def update_contest(
+    contest_id: str,
+    contest_data: ContestUpdate,
+    current_admin: User = Depends(get_current_admin),
+    session: Session = Depends(get_session)
+):
+    """Update contest details"""
+    contest = session.get(Contest, contest_id)
+    if not contest:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Contest not found"
+        )
+    
+    # Check if admin owns the course
+    course = session.get(Course, contest.course_id)
+    if not course or course.instructor_id != current_admin.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only update contests for your own courses"
+        )
+    
+    # Get contest status to determine what can be updated
+    contest_status = contest.get_status()
+    
+    # Check if there are any submissions for this contest
+    existing_submissions = session.exec(
+        select(Submission).where(Submission.contest_id == contest_id)
+    ).first()
+    
+    # Update basic info (always allowed)
+    if contest_data.name is not None:
+        contest.name = contest_data.name
+    if contest_data.description is not None:
+        contest.description = contest_data.description
+    
+    # Time updates have restrictions
+    if contest_data.start_time is not None or contest_data.end_time is not None:
+        # If contest has started or has submissions, don't allow time changes
+        if contest_status != ContestStatus.NOT_STARTED or existing_submissions:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot modify contest times after contest has started or has submissions"
+            )
+        
+        # Validate new time range
+        new_start = contest_data.start_time if contest_data.start_time is not None else contest.start_time
+        new_end = contest_data.end_time if contest_data.end_time is not None else contest.end_time
+        
+        if new_start >= new_end:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Start time must be before end time"
+            )
+        
+        if contest_data.start_time is not None:
+            contest.start_time = contest_data.start_time
+        if contest_data.end_time is not None:
+            contest.end_time = contest_data.end_time
+    
+    # Update timestamp
+    contest.updated_at = datetime.utcnow()
+    
+    session.add(contest)
+    session.commit()
+    session.refresh(contest)
+    
+    return ContestResponse(
+        id=contest.id,
+        course_id=contest.course_id,
+        name=contest.name,
+        description=contest.description,
+        start_time=contest.start_time,
+        end_time=contest.end_time,
+        status=contest.get_status(),
+        created_at=contest.created_at
+    )
+
+
 @router.post("/{contest_id}/submit", response_model=SubmissionResponse)
 def submit_contest(
     contest_id: str,

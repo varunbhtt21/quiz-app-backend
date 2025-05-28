@@ -108,7 +108,11 @@ def export_contest_results(
                     row[f"Q{problem.order_index + 1} Score"] = 0
                     row[f"Q{problem.order_index + 1} Max"] = problem.marks
                     row[f"Q{problem.order_index + 1} Student Answer"] = "Error"
-                    row[f"Q{problem.order_index + 1} Correct Answer"] = ", ".join(problem.get_correct_options())
+                    try:
+                        correct_options = json.loads(problem.correct_options)
+                        row[f"Q{problem.order_index + 1} Correct Answer"] = ", ".join(correct_options)
+                    except (json.JSONDecodeError, TypeError):
+                        row[f"Q{problem.order_index + 1} Correct Answer"] = "Error parsing options"
         else:
             # Student didn't submit
             row.update({
@@ -125,7 +129,11 @@ def export_contest_results(
                 row[f"Q{problem.order_index + 1} Score"] = 0
                 row[f"Q{problem.order_index + 1} Max"] = problem.marks
                 row[f"Q{problem.order_index + 1} Student Answer"] = "Not Submitted"
-                row[f"Q{problem.order_index + 1} Correct Answer"] = ", ".join(problem.get_correct_options())
+                try:
+                    correct_options = json.loads(problem.correct_options)
+                    row[f"Q{problem.order_index + 1} Correct Answer"] = ", ".join(correct_options)
+                except (json.JSONDecodeError, TypeError):
+                    row[f"Q{problem.order_index + 1} Correct Answer"] = "Error parsing options"
         
         excel_data.append(row)
     
@@ -172,6 +180,12 @@ def export_contest_results(
         # Problem details sheet
         problem_details = []
         for problem in problems:
+            try:
+                correct_options = json.loads(problem.correct_options)
+                correct_options_str = ", ".join(correct_options)
+            except (json.JSONDecodeError, TypeError):
+                correct_options_str = "Error parsing options"
+                
             problem_details.append({
                 "Question Number": f"Q{problem.order_index + 1}",
                 "Title": problem.title,
@@ -180,7 +194,7 @@ def export_contest_results(
                 "Option B": problem.option_b,
                 "Option C": problem.option_c,
                 "Option D": problem.option_d,
-                "Correct Options": ", ".join(problem.get_correct_options()),
+                "Correct Options": correct_options_str,
                 "Marks": problem.marks
             })
         
@@ -207,7 +221,7 @@ def export_contest_results_csv(
     current_admin: User = Depends(get_current_admin),
     session: Session = Depends(get_session)
 ):
-    """Export contest results to CSV file (simplified version)"""
+    """Export contest results to CSV file (comprehensive version matching Excel)"""
     # Verify contest exists and admin has access
     contest = session.get(Contest, contest_id)
     if not contest:
@@ -223,6 +237,12 @@ def export_contest_results_csv(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied to this contest"
         )
+    
+    # Get contest problems
+    problems_stmt = select(ContestProblem).where(
+        ContestProblem.contest_id == contest_id
+    ).order_by(ContestProblem.order_index)
+    problems = session.exec(problems_stmt).all()
     
     # Get all students enrolled in the course
     students_stmt = select(User).join(
@@ -245,12 +265,13 @@ def export_contest_results_csv(
     for submission, student in submission_results:
         submissions_dict[student.id] = submission
     
-    # Prepare simplified data for CSV
+    # Prepare comprehensive data for CSV (same as Excel)
     csv_data = []
     
     for student in students:
         row = {
             "Student Email": student.email,
+            "Student ID": student.id,
             "Submitted": "Yes" if student.id in submissions_dict else "No"
         }
         
@@ -261,22 +282,55 @@ def export_contest_results_csv(
                 "Max Possible Score": submission.max_possible_score,
                 "Percentage": round((submission.total_score / submission.max_possible_score * 100), 2) if submission.max_possible_score > 0 else 0,
                 "Submitted At": submission.submitted_at.strftime("%Y-%m-%d %H:%M:%S"),
-                "Time Taken (minutes)": round(submission.time_taken_seconds / 60, 2) if submission.time_taken_seconds else None
+                "Time Taken (seconds)": submission.time_taken_seconds,
+                "Auto Submitted": "Yes" if submission.is_auto_submitted else "No"
             })
+            
+            # Add problem-wise scores
+            try:
+                problem_scores = json.loads(submission.problem_scores)
+                for problem in problems:
+                    problem_data = problem_scores.get(problem.id, {})
+                    row[f"Q{problem.order_index + 1} Score"] = problem_data.get("score", 0)
+                    row[f"Q{problem.order_index + 1} Max"] = problem_data.get("max_score", problem.marks)
+                    
+                    # Add student answers and correct answers
+                    student_answer = problem_data.get("student_answer", [])
+                    correct_answer = problem_data.get("correct_answer", [])
+                    row[f"Q{problem.order_index + 1} Student Answer"] = ", ".join(student_answer) if student_answer else "No Answer"
+                    row[f"Q{problem.order_index + 1} Correct Answer"] = ", ".join(correct_answer)
+            except (json.JSONDecodeError, KeyError):
+                # Handle cases where problem_scores is malformed
+                for problem in problems:
+                    row[f"Q{problem.order_index + 1} Score"] = 0
+                    row[f"Q{problem.order_index + 1} Max"] = problem.marks
+                    row[f"Q{problem.order_index + 1} Student Answer"] = "Error"
+                    try:
+                        correct_options = json.loads(problem.correct_options)
+                        row[f"Q{problem.order_index + 1} Correct Answer"] = ", ".join(correct_options)
+                    except (json.JSONDecodeError, TypeError):
+                        row[f"Q{problem.order_index + 1} Correct Answer"] = "Error parsing options"
         else:
             # Student didn't submit
-            max_possible = session.exec(
-                select(ContestProblem).where(ContestProblem.contest_id == contest_id)
-            ).all()
-            total_marks = sum(p.marks for p in max_possible)
-            
             row.update({
                 "Total Score": 0,
-                "Max Possible Score": total_marks,
+                "Max Possible Score": sum(p.marks for p in problems),
                 "Percentage": 0,
                 "Submitted At": "Not Submitted",
-                "Time Taken (minutes)": None
+                "Time Taken (seconds)": None,
+                "Auto Submitted": "No"
             })
+            
+            # Add empty problem scores
+            for problem in problems:
+                row[f"Q{problem.order_index + 1} Score"] = 0
+                row[f"Q{problem.order_index + 1} Max"] = problem.marks
+                row[f"Q{problem.order_index + 1} Student Answer"] = "Not Submitted"
+                try:
+                    correct_options = json.loads(problem.correct_options)
+                    row[f"Q{problem.order_index + 1} Correct Answer"] = ", ".join(correct_options)
+                except (json.JSONDecodeError, TypeError):
+                    row[f"Q{problem.order_index + 1} Correct Answer"] = "Error parsing options"
         
         csv_data.append(row)
     

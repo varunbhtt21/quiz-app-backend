@@ -27,7 +27,10 @@ class Contest(SQLModel, table=True):
     
     def get_status(self) -> ContestStatus:
         """Get current contest status based on time"""
-        now = datetime.utcnow()
+        # Get current time in local timezone for comparison
+        # Since we're storing local times, we should compare with local time
+        now = datetime.now()  # Local time instead of UTC
+        
         if now < self.start_time:
             return ContestStatus.NOT_STARTED
         elif now > self.end_time:
