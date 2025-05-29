@@ -7,11 +7,13 @@ from app.models.user import UserRole
 class StudentCreate(BaseModel):
     email: EmailStr
     password: str
+    role: UserRole = UserRole.STUDENT  # Default to student
 
 
 class StudentResponse(BaseModel):
     id: str
     email: str
+    role: UserRole
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -19,7 +21,9 @@ class StudentResponse(BaseModel):
 
 class StudentUpdate(BaseModel):
     email: Optional[EmailStr] = None
+    role: Optional[UserRole] = None
     is_active: Optional[bool] = None
+    password: Optional[str] = None  # Add password field for updates
 
 
 class StudentEnrollment(BaseModel):

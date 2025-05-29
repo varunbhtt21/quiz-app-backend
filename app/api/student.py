@@ -17,31 +17,37 @@ router = APIRouter()
 
 
 @router.get("/", response_model=List[StudentResponse])
-def list_students(
+def list_users(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     search: str = Query(None),
+    role: str = Query(None, description="Filter by role: admin or student"),
     current_admin: User = Depends(get_current_admin),
     session: Session = Depends(get_session)
 ):
-    """List all students"""
-    statement = select(User).where(User.role == UserRole.STUDENT)
+    """List all users (admins and students)"""
+    statement = select(User)
+    
+    # Filter by role if specified
+    if role and role in ['admin', 'student']:
+        statement = statement.where(User.role == UserRole(role))
     
     if search:
         statement = statement.where(User.email.contains(search))
     
     statement = statement.offset(skip).limit(limit)
-    students = session.exec(statement).all()
+    users = session.exec(statement).all()
     
     return [
         StudentResponse(
-            id=student.id,
-            email=student.email,
-            is_active=student.is_active,
-            created_at=student.created_at,
-            updated_at=student.updated_at
+            id=user.id,
+            email=user.email,
+            role=user.role,
+            is_active=user.is_active,
+            created_at=user.created_at,
+            updated_at=user.updated_at
         )
-        for student in students
+        for user in users
     ]
 
 
@@ -69,7 +75,7 @@ def create_student(
     student = User(
         email=student_data.email,
         hashed_password=hashed_password,
-        role=UserRole.STUDENT
+        role=student_data.role  # Use role from request data
     )
     
     session.add(student)
@@ -79,6 +85,7 @@ def create_student(
     return StudentResponse(
         id=student.id,
         email=student.email,
+        role=student.role,
         is_active=student.is_active,
         created_at=student.created_at,
         updated_at=student.updated_at
@@ -86,89 +93,99 @@ def create_student(
 
 
 @router.get("/{student_id}", response_model=StudentResponse)
-def get_student(
+def get_user(
     student_id: str,
     current_admin: User = Depends(get_current_admin),
     session: Session = Depends(get_session)
 ):
-    """Get a specific student"""
-    student = session.get(User, student_id)
-    if not student or student.role != UserRole.STUDENT:
+    """Get a specific user"""
+    user = session.get(User, student_id)
+    if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Student not found"
+            detail="User not found"
         )
     
     return StudentResponse(
-        id=student.id,
-        email=student.email,
-        is_active=student.is_active,
-        created_at=student.created_at,
-        updated_at=student.updated_at
+        id=user.id,
+        email=user.email,
+        role=user.role,
+        is_active=user.is_active,
+        created_at=user.created_at,
+        updated_at=user.updated_at
     )
 
 
 @router.put("/{student_id}", response_model=StudentResponse)
-def update_student(
+def update_user(
     student_id: str,
     student_data: StudentUpdate,
     current_admin: User = Depends(get_current_admin),
     session: Session = Depends(get_session)
 ):
-    """Update a student"""
-    student = session.get(User, student_id)
-    if not student or student.role != UserRole.STUDENT:
+    """Update a user"""
+    user = session.get(User, student_id)
+    if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Student not found"
+            detail="User not found"
         )
     
     # Update fields
     update_data = student_data.dict(exclude_unset=True)
+    
+    # Handle password update separately (needs hashing)
+    if 'password' in update_data:
+        password = update_data.pop('password')
+        if password:  # Only update if password is not empty
+            user.hashed_password = get_password_hash(password)
+    
+    # Update other fields
     for field, value in update_data.items():
-        setattr(student, field, value)
+        setattr(user, field, value)
     
-    student.updated_at = datetime.utcnow()
+    user.updated_at = datetime.utcnow()
     
-    session.add(student)
+    session.add(user)
     session.commit()
-    session.refresh(student)
+    session.refresh(user)
     
     return StudentResponse(
-        id=student.id,
-        email=student.email,
-        is_active=student.is_active,
-        created_at=student.created_at,
-        updated_at=student.updated_at
+        id=user.id,
+        email=user.email,
+        role=user.role,
+        is_active=user.is_active,
+        created_at=user.created_at,
+        updated_at=user.updated_at
     )
 
 
 @router.delete("/{student_id}")
-def delete_student(
+def delete_user(
     student_id: str,
     current_admin: User = Depends(get_current_admin),
     session: Session = Depends(get_session)
 ):
-    """Delete a student"""
-    student = session.get(User, student_id)
-    if not student or student.role != UserRole.STUDENT:
+    """Delete a user"""
+    user = session.get(User, student_id)
+    if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Student not found"
+            detail="User not found"
         )
     
-    session.delete(student)
+    session.delete(user)
     session.commit()
     
-    return {"message": "Student deleted successfully"}
+    return {"message": "User deleted successfully"}
 
 
 @router.get("/template/download")
 def download_student_template(
     current_admin: User = Depends(get_current_admin)
 ):
-    """Download CSV template for bulk student import"""
-    # Create clean CSV content without comments for better spreadsheet compatibility
+    """Download CSV template for bulk student import (students only)"""
+    # Create clean CSV content for student import only - no role field needed
     csv_content = """email,password
 student1@example.com,password123
 student2@example.com,password456
@@ -198,7 +215,7 @@ def bulk_import_students(
     current_admin: User = Depends(get_current_admin),
     session: Session = Depends(get_session)
 ):
-    """Bulk import students from CSV file"""
+    """Bulk import students from CSV file (creates students only, no admins for security)"""
     if not file.filename.endswith(('.csv', '.txt')):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -223,7 +240,7 @@ def bulk_import_students(
         header = lines[0].split(',')
         header = [col.strip().lower() for col in header]
         
-        # Validate required columns
+        # Validate required columns (only email and password - no role for security)
         required_columns = ['email', 'password']
         missing_columns = [col for col in required_columns if col not in header]
         if missing_columns:
@@ -236,7 +253,7 @@ def bulk_import_students(
         email_idx = header.index('email')
         password_idx = header.index('password')
         
-        # Process students
+        # Process students (only creates student accounts for security)
         results = {
             "total_rows": len(lines) - 1,  # Exclude header
             "successful": 0,
@@ -280,20 +297,20 @@ def bulk_import_students(
                     results["failed"] += 1
                     continue
                 
-                # Create student
+                # Create student account only (no admin creation via bulk import for security)
                 hashed_password = get_password_hash(password)
-                student = User(
+                user = User(
                     email=email,
                     hashed_password=hashed_password,
-                    role=UserRole.STUDENT
+                    role=UserRole.STUDENT  # Always STUDENT role - admins must be created manually
                 )
                 
-                session.add(student)
+                session.add(user)
                 session.flush()  # Get the ID
                 
                 results["created_students"].append({
-                    "id": student.id,
-                    "email": student.email
+                    "id": user.id,
+                    "email": user.email
                 })
                 results["successful"] += 1
                 

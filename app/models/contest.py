@@ -56,6 +56,7 @@ class ContestProblem(SQLModel, table=True):
     option_d: str
     correct_options: str  # JSON list
     explanation: Optional[str] = Field(default=None)
+    image_url: Optional[str] = Field(default=None)  # Store image URL from original MCQ
     
     # Contest-specific settings
     marks: float = Field(default=1.0)

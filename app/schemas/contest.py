@@ -34,6 +34,7 @@ class ContestProblemResponse(BaseModel):
     option_d: str
     marks: float
     order_index: int
+    image_url: Optional[str] = None
 
 
 class ContestResponse(BaseModel):

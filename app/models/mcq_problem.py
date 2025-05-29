@@ -10,6 +10,9 @@ class MCQProblem(SQLModel, table=True):
     title: str = Field(index=True)
     description: str
     
+    # Optional image URL for the question
+    image_url: Optional[str] = Field(default=None, description="URL of the question image if any")
+    
     # Options
     option_a: str
     option_b: str

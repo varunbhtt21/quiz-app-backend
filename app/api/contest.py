@@ -82,6 +82,7 @@ def create_contest(
             option_d=mcq_problem.option_d,
             correct_options=mcq_problem.correct_options,
             explanation=mcq_problem.explanation,
+            image_url=mcq_problem.image_url,
             marks=problem_data.marks,
             order_index=idx
         )
@@ -219,7 +220,8 @@ def get_contest(
             option_c=problem.option_c,
             option_d=problem.option_d,
             marks=problem.marks,
-            order_index=problem.order_index
+            order_index=problem.order_index,
+            image_url=problem.image_url
         )
         problem_responses.append(problem_response)
     

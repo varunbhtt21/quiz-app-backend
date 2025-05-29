@@ -183,7 +183,7 @@ def delete_course(
     current_admin: User = Depends(get_current_admin),
     session: Session = Depends(get_session)
 ):
-    """Delete a course"""
+    """Delete a course and all related data (enrollments, contests, etc.)"""
     course = session.get(Course, course_id)
     if not course:
         raise HTTPException(
@@ -198,10 +198,53 @@ def delete_course(
             detail="You can only delete your own courses"
         )
     
-    session.delete(course)
-    session.commit()
-    
-    return {"message": "Course deleted successfully"}
+    try:
+        # First, get counts for deletion summary
+        enrollment_count = len(session.exec(
+            select(StudentCourse).where(StudentCourse.course_id == course_id)
+        ).all())
+        
+        # Import Contest model here to avoid circular imports
+        from app.models.contest import Contest
+        contest_count = len(session.exec(
+            select(Contest).where(Contest.course_id == course_id)
+        ).all())
+        
+        # Delete related records in order to avoid foreign key constraints
+        
+        # 1. Delete all student enrollments
+        enrollments = session.exec(
+            select(StudentCourse).where(StudentCourse.course_id == course_id)
+        ).all()
+        for enrollment in enrollments:
+            session.delete(enrollment)
+        
+        # 2. Delete all contests (which will cascade to contest problems and submissions)
+        contests = session.exec(
+            select(Contest).where(Contest.course_id == course_id)
+        ).all()
+        for contest in contests:
+            session.delete(contest)
+        
+        # 3. Finally delete the course
+        session.delete(course)
+        session.commit()
+        
+        return {
+            "message": "Course deleted successfully",
+            "details": {
+                "course_name": course.name,
+                "enrollments_deleted": enrollment_count,
+                "contests_deleted": contest_count
+            }
+        }
+        
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete course: {str(e)}"
+        )
 
 
 @router.post("/{course_id}/enroll")

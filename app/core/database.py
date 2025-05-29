@@ -1,6 +1,14 @@
 from sqlmodel import SQLModel, create_engine, Session
 from .config import settings
 
+# Import models to ensure they are registered with SQLModel
+from app.models.user import User
+from app.models.course import Course
+from app.models.student_course import StudentCourse
+from app.models.mcq_problem import MCQProblem
+from app.models.contest import Contest, ContestProblem
+from app.models.submission import Submission
+
 # Create database engine
 engine = create_engine(
     settings.database_url,
