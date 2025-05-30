@@ -9,9 +9,9 @@ pydantic[email]==2.5.0
 pydantic-settings==2.0.3
 python-dotenv==1.0.0
 pytest==7.4.3
-httpx==0.25.2
+httpx==0.24.1
 pandas==2.2.3
 openpyxl==3.1.5
 requests==2.31.0
 psycopg==3.1.18
-supabase==2.6.0 
+supabase==2.5.0 
