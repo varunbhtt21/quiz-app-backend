@@ -6,79 +6,13 @@ from app.models.mcq_problem import MCQProblem
 from app.models.user import User
 from app.core.database import get_session
 from app.utils.auth import get_current_admin
+from app.services.storage import storage_service
 import json
-import os
 from datetime import datetime
-import uuid
 import csv
 from io import StringIO
-import requests
-from urllib.parse import urlparse
-import mimetypes
 
 router = APIRouter()
-
-# Configure upload directory
-UPLOAD_DIR = "uploads"
-if not os.path.exists(UPLOAD_DIR):
-    os.makedirs(UPLOAD_DIR)
-
-async def download_image_from_url(image_url: str) -> Optional[str]:
-    """Download image from URL and save it locally. Returns the local image URL or None if failed."""
-    try:
-        # Validate URL
-        parsed_url = urlparse(image_url)
-        if not parsed_url.scheme or not parsed_url.netloc:
-            return None
-        
-        # Download image with timeout
-        response = requests.get(image_url, timeout=30, stream=True)
-        response.raise_for_status()
-        
-        # Check content type
-        content_type = response.headers.get('content-type', '')
-        if not content_type.startswith('image/'):
-            return None
-        
-        # Determine file extension
-        content_type_to_ext = {
-            'image/jpeg': '.jpg',
-            'image/png': '.png', 
-            'image/gif': '.gif',
-            'image/webp': '.webp'
-        }
-        
-        file_extension = content_type_to_ext.get(content_type)
-        if not file_extension:
-            # Try to get extension from URL
-            file_extension = os.path.splitext(parsed_url.path)[1]
-            if file_extension not in ['.jpg', '.jpeg', '.png', '.gif', '.webp']:
-                file_extension = '.jpg'  # Default
-        
-        # Generate unique filename
-        unique_filename = f"{uuid.uuid4()}{file_extension}"
-        file_path = os.path.join(UPLOAD_DIR, unique_filename)
-        
-        # Check file size (max 10MB)
-        content_length = response.headers.get('content-length')
-        if content_length and int(content_length) > 10 * 1024 * 1024:
-            return None
-        
-        # Save file
-        with open(file_path, 'wb') as f:
-            downloaded_size = 0
-            for chunk in response.iter_content(chunk_size=8192):
-                downloaded_size += len(chunk)
-                if downloaded_size > 10 * 1024 * 1024:  # 10MB limit
-                    os.remove(file_path)  # Clean up partial file
-                    return None
-                f.write(chunk)
-        
-        return f"/uploads/{unique_filename}"
-        
-    except Exception as e:
-        print(f"Error downloading image from {image_url}: {str(e)}")
-        return None
 
 @router.post("/mcq")
 async def create_mcq(
@@ -104,19 +38,13 @@ async def create_mcq(
 
     # Handle image upload if provided
     image_url = None
-    if image:
-        # Generate unique filename
-        file_extension = os.path.splitext(image.filename)[1]
-        unique_filename = f"{uuid.uuid4()}{file_extension}"
-        file_path = os.path.join(UPLOAD_DIR, unique_filename)
-        
-        # Save the file
-        with open(file_path, "wb") as buffer:
-            content = await image.read()
-            buffer.write(content)
-        
-        # Store the relative path as the image URL
-        image_url = f"/uploads/{unique_filename}"
+    if image and storage_service:
+        try:
+            image_url = await storage_service.upload_image(image, "mcq")
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to upload image: {str(e)}")
 
     # Create MCQ
     mcq = MCQProblem(
@@ -167,25 +95,18 @@ async def update_mcq(
         raise HTTPException(status_code=400, detail="Invalid correct_options format")
 
     # Handle image upload if provided
-    if image:
-        # Delete old image if exists
-        if mcq.image_url:
-            old_image_path = os.path.join(UPLOAD_DIR, os.path.basename(mcq.image_url))
-            if os.path.exists(old_image_path):
-                os.remove(old_image_path)
+    if image and storage_service:
+        try:
+            # Delete old image if exists
+            if mcq.image_url:
+                storage_service.delete_image(mcq.image_url)
 
-        # Generate unique filename
-        file_extension = os.path.splitext(image.filename)[1]
-        unique_filename = f"{uuid.uuid4()}{file_extension}"
-        file_path = os.path.join(UPLOAD_DIR, unique_filename)
-        
-        # Save the file
-        with open(file_path, "wb") as buffer:
-            content = await image.read()
-            buffer.write(content)
-        
-        # Update image URL
-        mcq.image_url = f"/uploads/{unique_filename}"
+            # Upload new image
+            mcq.image_url = await storage_service.upload_image(image, "mcq")
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to upload image: {str(e)}")
 
     # Update MCQ fields
     mcq.title = title
@@ -274,44 +195,36 @@ async def upload_mcq_image(
     if not mcq:
         raise HTTPException(status_code=404, detail="MCQ not found")
     
-    # Validate image file
-    if not image.content_type.startswith('image/'):
-        raise HTTPException(status_code=400, detail="File must be an image")
+    if not storage_service:
+        raise HTTPException(status_code=500, detail="Storage service not configured")
     
-    # Check file size (5MB limit)
-    content = await image.read()
-    if len(content) > 5 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="Image size must be less than 5MB")
-    
-    # Delete old image if exists
-    if mcq.image_url:
-        old_image_path = os.path.join(UPLOAD_DIR, os.path.basename(mcq.image_url))
-        if os.path.exists(old_image_path):
-            os.remove(old_image_path)
-    
-    # Generate unique filename
-    file_extension = os.path.splitext(image.filename)[1]
-    unique_filename = f"{uuid.uuid4()}{file_extension}"
-    file_path = os.path.join(UPLOAD_DIR, unique_filename)
-    
-    # Save the file
-    with open(file_path, "wb") as buffer:
-        buffer.write(content)
-    
-    # Update MCQ with new image URL
-    mcq.image_url = f"/uploads/{unique_filename}"
-    mcq.updated_at = datetime.utcnow()
-    
-    session.add(mcq)
-    session.commit()
-    session.refresh(mcq)
-    
-    return {
-        "message": "Image uploaded successfully",
-        "image_url": mcq.image_url,
-        "mcq_id": mcq.id,
-        "title": mcq.title
-    }
+    try:
+        # Delete old image if exists
+        if mcq.image_url:
+            storage_service.delete_image(mcq.image_url)
+        
+        # Upload new image to Supabase Storage
+        image_url = await storage_service.upload_image(image, "mcq")
+        
+        # Update MCQ with new image URL
+        mcq.image_url = image_url
+        mcq.updated_at = datetime.utcnow()
+        
+        session.add(mcq)
+        session.commit()
+        session.refresh(mcq)
+        
+        return {
+            "message": "Image uploaded successfully",
+            "image_url": mcq.image_url,
+            "mcq_id": mcq.id,
+            "title": mcq.title
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to upload image: {str(e)}")
 
 @router.delete("/mcq/{mcq_id}/remove-image")
 async def remove_mcq_image(
@@ -328,10 +241,9 @@ async def remove_mcq_image(
     if not mcq.image_url:
         raise HTTPException(status_code=400, detail="MCQ has no image to remove")
     
-    # Delete image file
-    image_path = os.path.join(UPLOAD_DIR, os.path.basename(mcq.image_url))
-    if os.path.exists(image_path):
-        os.remove(image_path)
+    if storage_service:
+        # Delete image from Supabase Storage
+        storage_service.delete_image(mcq.image_url)
     
     # Update MCQ to remove image URL
     mcq.image_url = None
@@ -471,10 +383,10 @@ async def bulk_import_mcqs(
                 
                 # Handle image URL if provided
                 image_url = None
-                if row.get('image_url', '').strip():
+                if row.get('image_url', '').strip() and storage_service:
                     image_url_input = row['image_url'].strip()
                     try:
-                        downloaded_image_url = await download_image_from_url(image_url_input)
+                        downloaded_image_url = await storage_service.download_and_upload_from_url(image_url_input, "mcq")
                         if downloaded_image_url:
                             image_url = downloaded_image_url
                         else:

@@ -5,6 +5,12 @@ from typing import List
 class Settings(BaseSettings):
     # Database Configuration
     database_url: str = "postgresql://postgres:password@localhost/quiz_app"
+    direct_url: str = ""  # Direct connection URL for migrations/admin operations
+    
+    # Supabase Configuration
+    supabase_url: str = ""
+    supabase_key: str = ""
+    supabase_storage_bucket: str = "quiz-images"
     
     # JWT Configuration
     jwt_secret_key: str = "your-super-secret-jwt-key-change-this-in-production"

@@ -166,6 +166,35 @@ If you get connection errors:
 3. **Test connection**: Run `python test_supabase_connection.py`
 4. **Use DIRECT_URL for migrations**: Our init script automatically prefers `DIRECT_URL`
 
+### Storage Setup
+
+The Quiz App uses Supabase Storage for image uploads. To enable image functionality:
+
+1. **Add Storage Configuration to .env**:
+   ```env
+   # Supabase Storage Configuration
+   SUPABASE_URL=https://your-project-id.supabase.co
+   SUPABASE_KEY=your-anon-key-here
+   SUPABASE_STORAGE_BUCKET=quiz-images
+   ```
+
+2. **Get Supabase Keys**:
+   - Go to Settings → API in your Supabase dashboard
+   - Copy the **URL** and **anon/public** key
+
+3. **Test Storage Setup**:
+   ```bash
+   python test_storage.py
+   ```
+
+4. **Features**:
+   - Automatic bucket creation
+   - Image validation (JPEG, PNG, GIF, WebP)
+   - Size limits (5MB uploads, 10MB bulk imports)
+   - CDN delivery for fast loading
+
+For detailed setup instructions, see [SUPABASE_STORAGE_SETUP.md](./SUPABASE_STORAGE_SETUP.md)
+
 ## API Endpoints
 
 ### Authentication

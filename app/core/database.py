@@ -50,8 +50,30 @@ engine = create_engine(
 
 
 def create_db_and_tables():
-    """Create database tables"""
-    SQLModel.metadata.create_all(engine)
+    """Create database tables using direct connection for compatibility"""
+    # Use DIRECT_URL for table creation if available, otherwise fallback to DATABASE_URL
+    direct_url = getattr(settings, 'direct_url', None)
+    table_creation_url = direct_url if direct_url else settings.database_url
+    
+    # Clean the URL
+    cleaned_url = clean_database_url(table_creation_url)
+    
+    # Create a separate engine for table creation
+    table_engine = create_engine(
+        cleaned_url,
+        echo=settings.debug,
+        pool_pre_ping=True,
+        pool_recycle=3600
+    )
+    
+    try:
+        SQLModel.metadata.create_all(table_engine)
+        print("✅ Database tables created/verified successfully")
+    except Exception as e:
+        print(f"⚠️  Table creation warning: {e}")
+        print("📝 Tables may already exist or there might be a connection issue")
+    finally:
+        table_engine.dispose()
 
 
 def get_session():
