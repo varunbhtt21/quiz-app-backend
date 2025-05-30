@@ -9,9 +9,18 @@ pydantic[email]==2.5.0
 pydantic-settings==2.0.3
 python-dotenv==1.0.0
 pytest==7.4.3
+# HTTP Client - Render compatible version (active)
 httpx==0.24.1
+# httpx==0.25.2  # Works on localhost with Python 3.13
 pandas==2.2.3
 openpyxl==3.1.5
 requests==2.31.0
 psycopg==3.1.18
-supabase==2.5.0 
+# Supabase - Render compatible version (active)
+supabase==2.5.0
+# supabase==2.7.4  # Works on localhost but has proxy parameter conflict on Render Python 3.11
+
+# Version compatibility notes:
+# - Render (Python 3.11): supabase==2.5.0 + httpx==0.24.1 ✅
+# - Localhost (Python 3.13): supabase==2.7.4 + httpx==0.25.2 ✅
+# - Issue: supabase>=2.6.0 has gotrue dependency conflicts on Render 
