@@ -189,5 +189,31 @@ class StorageService:
             return None
 
 
-# Create a singleton instance
-storage_service = StorageService() if settings.supabase_url and settings.supabase_key else None 
+# Create a singleton instance with error handling
+storage_service = None
+
+def get_storage_service():
+    """Get storage service instance with lazy initialization and error handling"""
+    global storage_service
+    if storage_service is None:
+        try:
+            if settings.supabase_url and settings.supabase_key:
+                storage_service = StorageService()
+                print("✅ Supabase Storage initialized successfully")
+            else:
+                print("⚠️ Supabase Storage not configured (missing URL or key)")
+        except Exception as e:
+            print(f"❌ Failed to initialize Supabase Storage: {e}")
+            print("🔄 App will continue without storage functionality")
+            storage_service = None
+    return storage_service
+
+# Try to initialize on import, but don't crash if it fails
+try:
+    if settings.supabase_url and settings.supabase_key:
+        storage_service = StorageService()
+        print("✅ Supabase Storage initialized successfully")
+except Exception as e:
+    print(f"⚠️ Supabase Storage initialization failed: {e}")
+    print("🔄 Storage will be disabled until dependency issues are resolved")
+    storage_service = None 
