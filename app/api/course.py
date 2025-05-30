@@ -229,7 +229,7 @@ def delete_course(
         # 3. Finally delete the course
         session.delete(course)
         session.commit()
-        
+    
         return {
             "message": "Course deleted successfully",
             "details": {
