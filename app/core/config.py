@@ -4,7 +4,7 @@ from typing import List
 
 class Settings(BaseSettings):
     # Database Configuration
-    database_url: str = "sqlite:///./quiz_app.db"
+    database_url: str = "postgresql://postgres:password@localhost/quiz_app"
     
     # JWT Configuration
     jwt_secret_key: str = "your-super-secret-jwt-key-change-this-in-production"
@@ -12,14 +12,14 @@ class Settings(BaseSettings):
     jwt_access_token_expire_minutes: int = 30
     
     # Application Configuration
-    app_name: str = "Quiz App Backend"
+    app_name: str = "QuizMaster by Jazzee"
     app_version: str = "1.0.0"
     debug: bool = True
     cors_origins: List[str] = [
-        "http://localhost:8501", 
-        "http://127.0.0.1:8501",
-        "http://localhost:8080",
-        "http://127.0.0.1:8080"
+        "http://localhost:5173", 
+        "http://127.0.0.1:5173",
+        "http://localhost:8501",
+        "http://127.0.0.1:8501"
     ]
     
     # Email Configuration
@@ -30,13 +30,14 @@ class Settings(BaseSettings):
     from_email: str = ""
     
     # Frontend Configuration
-    frontend_url: str = "http://localhost:8501"
+    frontend_url: str = "http://localhost:5173"
     
     # Security
     bcrypt_rounds: int = 12
 
     class Config:
         env_file = ".env"
+        extra = "ignore"
 
 
 settings = Settings() 

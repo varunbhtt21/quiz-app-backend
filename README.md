@@ -14,7 +14,7 @@ A FastAPI-based backend for a comprehensive quiz/assessment platform with role-b
 ## Tech Stack
 
 - **Framework**: FastAPI 0.104.1
-- **Database**: SQLite (development) / PostgreSQL (production)
+- **Database**: Supabase PostgreSQL (production) / SQLite (local development)
 - **ORM**: SQLModel
 - **Authentication**: JWT with bcrypt password hashing
 - **Validation**: Pydantic schemas
@@ -26,6 +26,7 @@ A FastAPI-based backend for a comprehensive quiz/assessment platform with role-b
 
 - Python 3.11+
 - uv (recommended) or pip
+- Supabase account (for database)
 
 ### Installation
 
@@ -45,21 +46,125 @@ A FastAPI-based backend for a comprehensive quiz/assessment platform with role-b
    uv pip install -r requirements.txt
    ```
 
-4. **Set up environment variables**
+4. **Set up Supabase Database**
+   
+   a. **Create a Supabase project**:
+      - Go to [supabase.com](https://supabase.com) and create a new project
+      - Note your project URL and password
+   
+   b. **Configure database access**:
+      - In Supabase dashboard, go to Settings → Database
+      - Find your connection string (should look like):
+        ```
+        postgresql://postgres:[YOUR-PASSWORD]@db.[PROJECT-ID].supabase.co:5432/postgres
+        ```
+   
+   c. **Create .env file**:
+      ```bash
+      # Create .env file with your Supabase credentials
+      DATABASE_URL=postgresql://postgres:[YOUR-PASSWORD]@db.[PROJECT-ID].supabase.co:5432/postgres
+      JWT_SECRET_KEY=your-super-secret-jwt-key-change-this-in-production
+      JWT_ALGORITHM=HS256
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES=30
+      APP_NAME=QuizMaster by Jazzee
+      DEBUG=true
+      CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+      FRONTEND_URL=http://localhost:5173
+      BCRYPT_ROUNDS=12
+      ```
+
+5. **Test database connection**
    ```bash
-   cp .env.example .env
-   # Edit .env with your configuration
+   python test_supabase_connection.py
    ```
 
-5. **Run the development server**
+6. **Initialize database tables**
+   ```bash
+   python init_db.py
+   ```
+
+7. **Run the development server**
    ```bash
    uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
    ```
 
-6. **Access the API**
+8. **Access the API**
    - API: http://localhost:8000
    - Documentation: http://localhost:8000/docs
    - Alternative docs: http://localhost:8000/redoc
+
+## Supabase Configuration
+
+### Database Setup
+
+Your `.env` file should contain **both** connection strings:
+
+```env
+# Database Configuration (Supabase)
+
+# Pooled connection for application runtime (port 6543)
+DATABASE_URL=postgresql://postgres.[PROJECT_ID]:[PASSWORD]@aws-0-ap-south-1.pooler.supabase.com:6543/postgres
+
+# Direct connection for migrations and admin operations (port 5432)  
+DIRECT_URL=postgresql://postgres.[PROJECT_ID]:[PASSWORD]@aws-0-ap-south-1.pooler.supabase.com:5432/postgres
+
+# JWT Configuration  
+JWT_SECRET_KEY=your-super-secret-jwt-key-change-this-in-production
+JWT_ALGORITHM=HS256
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES=30
+
+# Application Configuration
+APP_NAME=QuizMaster by Jazzee
+APP_VERSION=1.0.0
+DEBUG=true
+
+# CORS Origins (add your frontend URLs)
+CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+
+# Frontend Configuration
+FRONTEND_URL=http://localhost:5173
+
+# Security
+BCRYPT_ROUNDS=12
+```
+
+### Connection Types Explained
+
+#### **DATABASE_URL (Pooled Connection)**
+```bash
+postgresql://postgres.[PROJECT_ID]:[PASSWORD]@aws-0-ap-south-1.pooler.supabase.com:6543/postgres
+```
+- **Port**: `6543` (Connection pooled)
+- **Used for**: Runtime application queries, API endpoints
+- **Benefits**: Handles many concurrent connections efficiently
+- **Note**: Our app automatically removes `?pgbouncer=true` parameter for compatibility
+
+#### **DIRECT_URL (Direct Connection)**  
+```bash
+postgresql://postgres.[PROJECT_ID]:[PASSWORD]@aws-0-ap-south-1.pooler.supabase.com:5432/postgres
+```
+- **Port**: `5432` (Direct connection)
+- **Used for**: Database migrations, schema changes, admin operations
+- **Benefits**: Full PostgreSQL feature support, no connection limits
+
+### Getting Your Supabase Connection Strings
+
+1. **Login to Supabase Dashboard**: https://supabase.com/dashboard
+2. **Select your project**
+3. **Go to Settings → Database**
+4. **Copy both connection strings**:
+   - **Connection pooling** (port 6543) → use as `DATABASE_URL`
+   - **Direct connection** (port 5432) → use as `DIRECT_URL`
+5. **Replace `[YOUR-PASSWORD]`** with your database password
+
+### Troubleshooting Supabase Connection
+
+If you get connection errors:
+
+1. **Check IP allowlist**: In Supabase dashboard → Settings → Database → Network restrictions
+2. **Verify credentials**: Make sure password is correct in both URLs
+3. **Test connection**: Run `python test_supabase_connection.py`
+4. **Use DIRECT_URL for migrations**: Our init script automatically prefers `DIRECT_URL`
 
 ## API Endpoints
 
@@ -146,27 +251,6 @@ alembic revision --autogenerate -m "Description"
 alembic upgrade head
 ```
 
-## Configuration
-
-Key environment variables in `.env`:
-
-```env
-# Database
-DATABASE_URL=sqlite:///./quiz_app.db
-
-# JWT Security
-JWT_SECRET_KEY=your-secret-key
-JWT_ACCESS_TOKEN_EXPIRE_MINUTES=30
-
-# CORS
-CORS_ORIGINS=["http://localhost:8501"]
-
-# Email (for student notifications)
-SMTP_HOST=smtp.gmail.com
-SMTP_USERNAME=your-email@gmail.com
-SMTP_PASSWORD=your-app-password
-```
-
 ## Initial Setup
 
 1. **Create Admin User**
@@ -196,7 +280,7 @@ SMTP_PASSWORD=your-app-password
 ## Production Deployment
 
 1. **Update environment variables**
-   - Use PostgreSQL for DATABASE_URL
+   - Use Supabase PostgreSQL for DATABASE_URL
    - Set strong JWT_SECRET_KEY
    - Configure SMTP settings
 
