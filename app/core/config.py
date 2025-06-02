@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 30
     
+    # OTPLESS Configuration
+    otpless_app_id: str = ""
+    otpless_client_id: str = ""
+    otpless_client_secret: str = ""
+    otpless_webhook_secret: str = ""
+    
     # Application Configuration
     app_name: str = "QuizMaster by Jazzee"
     app_version: str = "1.0.0"
@@ -24,7 +30,7 @@ class Settings(BaseSettings):
     cors_origins: List[str] = [
         "http://localhost:5173", 
         "http://127.0.0.1:5173",
-        "http://localhost:8501",
+        "http://localhost:8501", 
         "http://127.0.0.1:8501"
     ]
     

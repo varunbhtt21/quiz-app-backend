@@ -1,7 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, File, UploadFile
 from sqlmodel import Session, select
 from typing import List, Optional
 from datetime import datetime
+import csv
+import io
+from fastapi.responses import StreamingResponse
 
 from app.core.database import get_session
 from app.utils.auth import get_current_admin, get_current_user
@@ -10,7 +13,7 @@ from app.api.auth import generate_random_password
 from app.models.user import User, UserRole
 from app.models.course import Course
 from app.models.student_course import StudentCourse
-from app.schemas.course import CourseCreate, CourseUpdate, CourseResponse, StudentEnrollment
+from app.schemas.course import CourseCreate, CourseUpdate, CourseResponse, StudentEnrollment, CSVEnrollmentResult
 from app.schemas.student import EnrolledStudentResponse
 
 router = APIRouter(prefix="/courses", tags=["Courses"])
@@ -406,4 +409,185 @@ def unenroll_student(
     session.add(enrollment)
     session.commit()
     
-    return {"message": "Student removed from course successfully"} 
+    return {"message": "Student removed from course successfully"}
+
+
+@router.post("/{course_id}/enroll-csv", response_model=CSVEnrollmentResult)
+async def enroll_students_csv(
+    course_id: str,
+    file: UploadFile = File(...),
+    current_admin: User = Depends(get_current_admin),
+    session: Session = Depends(get_session)
+):
+    """Enroll students in a course using CSV file with email addresses"""
+    course = session.get(Course, course_id)
+    if not course:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Course not found"
+        )
+    
+    # Check if admin owns this course
+    if course.instructor_id != current_admin.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only enroll students in your own courses"
+        )
+    
+    if not file.filename.endswith('.csv'):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File must be a CSV file"
+        )
+    
+    try:
+        # Read CSV content
+        content = await file.read()
+        csv_content = content.decode('utf-8')
+        csv_reader = csv.DictReader(io.StringIO(csv_content))
+        
+        # Validate CSV headers
+        if 'email' not in csv_reader.fieldnames:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="CSV must contain 'email' column"
+            )
+        
+        emails = []
+        for row_num, row in enumerate(csv_reader, start=2):  # Start at 2 to account for header
+            email = row.get('email', '').strip()
+            if email:
+                emails.append(email.lower())
+            elif not email:
+                continue  # Skip empty rows
+        
+        if not emails:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No valid email addresses found in CSV"
+            )
+        
+        # Process enrollments
+        enrolled_count = 0
+        errors = []
+        enrolled_students = []
+        
+        for email in emails:
+            try:
+                # Find user by email
+                statement = select(User).where(
+                    User.email == email,
+                    User.role == UserRole.STUDENT
+                )
+                user = session.exec(statement).first()
+                
+                if not user:
+                    errors.append(f"Student with email {email} not found in system")
+                    continue
+                
+                # Check if already enrolled
+                enrollment_statement = select(StudentCourse).where(
+                    StudentCourse.student_id == user.id,
+                    StudentCourse.course_id == course_id
+                )
+                existing_enrollment = session.exec(enrollment_statement).first()
+                
+                if existing_enrollment:
+                    if not existing_enrollment.is_active:
+                        # Reactivate enrollment
+                        existing_enrollment.is_active = True
+                        existing_enrollment.enrolled_at = datetime.utcnow()
+                        session.add(existing_enrollment)
+                        enrolled_count += 1
+                        enrolled_students.append({
+                            "email": user.email,
+                            "name": user.name or "Not provided",
+                            "id": user.id,
+                            "status": "reactivated"
+                        })
+                    else:
+                        errors.append(f"Student {email} is already enrolled in this course")
+                else:
+                    # Create new enrollment
+                    enrollment = StudentCourse(
+                        student_id=user.id,
+                        course_id=course_id
+                    )
+                    session.add(enrollment)
+                    enrolled_count += 1
+                    enrolled_students.append({
+                        "email": user.email,
+                        "name": user.name or "Not provided",
+                        "id": user.id,
+                        "status": "enrolled"
+                    })
+                    
+            except Exception as e:
+                errors.append(f"Error processing {email}: {str(e)}")
+        
+        session.commit()
+        
+        return CSVEnrollmentResult(
+            total_emails=len(emails),
+            successful_enrollments=enrolled_count,
+            failed_enrollments=len(emails) - enrolled_count,
+            errors=errors,
+            enrolled_students=enrolled_students
+        )
+        
+    except UnicodeDecodeError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid CSV file encoding. Please use UTF-8 encoding."
+        )
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to process CSV enrollment: {str(e)}"
+        )
+
+
+@router.get("/{course_id}/enrollment-template")
+def download_enrollment_template(
+    course_id: str,
+    current_admin: User = Depends(get_current_admin),
+    session: Session = Depends(get_session)
+):
+    """Download CSV template for course enrollment"""
+    course = session.get(Course, course_id)
+    if not course:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Course not found"
+        )
+    
+    # Check if admin owns this course
+    if course.instructor_id != current_admin.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only download templates for your own courses"
+        )
+    
+    # Create CSV content for course enrollment
+    csv_content = """email
+student1@university.edu
+student2@university.edu
+student3@university.edu
+student4@university.edu
+student5@university.edu"""
+    
+    # Create file-like object
+    output = io.StringIO()
+    output.write(csv_content)
+    output.seek(0)
+    
+    # Generate filename
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"course_enrollment_template_{course.name.replace(' ', '_')}_{timestamp}.csv"
+    
+    return StreamingResponse(
+        io.BytesIO(output.getvalue().encode('utf-8')),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    ) 

@@ -10,7 +10,7 @@ from app.core.database import get_session
 from app.utils.auth import get_current_admin
 from app.core.security import get_password_hash
 from app.api.auth import generate_random_password
-from app.models.user import User, UserRole
+from app.models.user import User, UserRole, RegistrationStatus
 from app.schemas.student import StudentCreate, StudentResponse, StudentUpdate
 
 router = APIRouter()
@@ -184,14 +184,14 @@ def delete_user(
 def download_student_template(
     current_admin: User = Depends(get_current_admin)
 ):
-    """Download CSV template for bulk student import (students only)"""
-    # Create clean CSV content for student import only - no role field needed
-    csv_content = """email,password
-student1@example.com,password123
-student2@example.com,password456
-student3@example.com,password789
-student4@example.com,mypassword001
-student5@example.com,securepass999"""
+    """Download CSV template for bulk student pre-registration (email only)"""
+    # Create clean CSV content for student pre-registration - only email needed
+    csv_content = """email
+student1@example.com
+student2@example.com
+student3@example.com
+student4@example.com
+student5@example.com"""
     
     # Create CSV file
     output = BytesIO()
@@ -200,7 +200,7 @@ student5@example.com,securepass999"""
     
     # Generate filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"student_import_template_{timestamp}.csv"
+    filename = f"student_preregistration_template_{timestamp}.csv"
     
     return StreamingResponse(
         BytesIO(output.read()),
@@ -215,7 +215,7 @@ def bulk_import_students(
     current_admin: User = Depends(get_current_admin),
     session: Session = Depends(get_session)
 ):
-    """Bulk import students from CSV file (creates students only, no admins for security)"""
+    """Bulk pre-register students from CSV file (email only, OTP authentication on first login)"""
     if not file.filename.endswith(('.csv', '.txt')):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -240,8 +240,8 @@ def bulk_import_students(
         header = lines[0].split(',')
         header = [col.strip().lower() for col in header]
         
-        # Validate required columns (only email and password - no role for security)
-        required_columns = ['email', 'password']
+        # Validate required columns (only email needed for pre-registration)
+        required_columns = ['email']
         missing_columns = [col for col in required_columns if col not in header]
         if missing_columns:
             raise HTTPException(
@@ -251,15 +251,14 @@ def bulk_import_students(
         
         # Get column indices
         email_idx = header.index('email')
-        password_idx = header.index('password')
         
-        # Process students (only creates student accounts for security)
+        # Process students (pre-registration only)
         results = {
             "total_rows": len(lines) - 1,  # Exclude header
             "successful": 0,
             "failed": 0,
             "errors": [],
-            "created_students": []
+            "preregistered_students": []
         }
         
         for line_num, line in enumerate(lines[1:], start=2):  # Start from row 2 (after header)
@@ -267,23 +266,16 @@ def bulk_import_students(
                 # Split CSV line (simple split, doesn't handle quoted commas)
                 columns = [col.strip() for col in line.split(',')]
                 
-                if len(columns) < max(email_idx + 1, password_idx + 1):
+                if len(columns) < email_idx + 1:
                     results["errors"].append(f"Row {line_num}: Not enough columns in row")
                     results["failed"] += 1
                     continue
                 
                 email = columns[email_idx].strip().lower()
-                password = columns[password_idx].strip()
                 
                 # Validate email format
                 if '@' not in email or '.' not in email:
                     results["errors"].append(f"Row {line_num}: Invalid email format '{email}'")
-                    results["failed"] += 1
-                    continue
-                
-                # Validate password length
-                if len(password) < 6:
-                    results["errors"].append(f"Row {line_num}: Password too short (minimum 6 characters)")
                     results["failed"] += 1
                     continue
                 
@@ -297,20 +289,23 @@ def bulk_import_students(
                     results["failed"] += 1
                     continue
                 
-                # Create student account only (no admin creation via bulk import for security)
-                hashed_password = get_password_hash(password)
+                # Create pre-registered student (no password, PENDING status)
                 user = User(
                     email=email,
-                    hashed_password=hashed_password,
-                    role=UserRole.STUDENT  # Always STUDENT role - admins must be created manually
+                    hashed_password=None,  # No password - will use OTP authentication
+                    role=UserRole.STUDENT,
+                    auth_provider="otpless_mobile",  # Will use OTP authentication
+                    registration_status=RegistrationStatus.PENDING,  # Pre-registered, awaiting first login
+                    profile_completed=False  # Will complete profile on first login
                 )
                 
                 session.add(user)
                 session.flush()  # Get the ID
                 
-                results["created_students"].append({
+                results["preregistered_students"].append({
                     "id": user.id,
-                    "email": user.email
+                    "email": user.email,
+                    "status": "pre-registered"
                 })
                 results["successful"] += 1
                 

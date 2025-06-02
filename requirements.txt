@@ -14,7 +14,7 @@ httpx==0.24.1
 # httpx==0.25.2  # Works on localhost with Python 3.13
 pandas==2.2.3
 openpyxl==3.1.5
-requests==2.31.0
+requests==2.31.0 
 psycopg==3.1.18
 # Supabase - Render compatible version (active)
 supabase==2.5.0

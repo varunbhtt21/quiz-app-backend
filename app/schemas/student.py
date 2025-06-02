@@ -1,7 +1,7 @@
 from pydantic import BaseModel, EmailStr
 from typing import List, Optional
 from datetime import datetime
-from app.models.user import UserRole
+from app.models.user import UserRole, RegistrationStatus
 
 
 class StudentCreate(BaseModel):
@@ -15,6 +15,7 @@ class StudentResponse(BaseModel):
     email: str
     role: UserRole
     is_active: bool
+    registration_status: RegistrationStatus = RegistrationStatus.ACTIVE
     created_at: datetime
     updated_at: datetime
 

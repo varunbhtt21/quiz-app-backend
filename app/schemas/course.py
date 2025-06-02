@@ -23,4 +23,12 @@ class CourseResponse(BaseModel):
 
 
 class StudentEnrollment(BaseModel):
-    student_ids: List[str]  # List of student IDs to enroll in course 
+    student_ids: List[str]  # List of student IDs to enroll in course
+
+
+class CSVEnrollmentResult(BaseModel):
+    total_emails: int
+    successful_enrollments: int
+    failed_enrollments: int
+    errors: List[str]
+    enrolled_students: List[dict]  # List of {email, name, id} for successfully enrolled students 

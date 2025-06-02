@@ -205,7 +205,7 @@ async def upload_mcq_image(
         
         # Upload new image to Supabase Storage
         image_url = await storage_service.upload_image(image, "mcq")
-        
+    
         # Update MCQ with new image URL
         mcq.image_url = image_url
         mcq.updated_at = datetime.utcnow()
