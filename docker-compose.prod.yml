@@ -28,20 +28,20 @@ services:
       - OTPLESS_APP_ID=${OTPLESS_APP_ID}
       - OTPLESS_CLIENT_ID=${OTPLESS_CLIENT_ID}
       - OTPLESS_CLIENT_SECRET=${OTPLESS_CLIENT_SECRET}
-      - OTPLESS_WEBHOOK_SECRET=${OTPLESS_WEBHOOK_SECRET}
+      # - OTPLESS_WEBHOOK_SECRET=${OTPLESS_WEBHOOK_SECRET}
       
       # Application Configuration
       - APP_NAME=${APP_NAME:-QuizMaster by Jazzee}
       - APP_VERSION=${APP_VERSION:-1.0.0}
       - DEBUG=False
-      - CORS_ORIGINS=${CORS_ORIGINS}
+      - CORS_ORIGINS_STR=${CORS_ORIGINS_STR}
       
       # Email Configuration
-      - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
-      - SMTP_PORT=${SMTP_PORT:-587}
-      - SMTP_USERNAME=${SMTP_USERNAME}
-      - SMTP_PASSWORD=${SMTP_PASSWORD}
-      - FROM_EMAIL=${FROM_EMAIL}
+      # - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
+      # - SMTP_PORT=${SMTP_PORT:-587}
+      # - SMTP_USERNAME=${SMTP_USERNAME}
+      # - SMTP_PASSWORD=${SMTP_PASSWORD}
+      # - FROM_EMAIL=${FROM_EMAIL}
       
       # Frontend Configuration
       - FRONTEND_URL=${FRONTEND_URL}
