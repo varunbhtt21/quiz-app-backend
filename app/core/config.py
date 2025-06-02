@@ -27,12 +27,21 @@ class Settings(BaseSettings):
     app_name: str = "QuizMaster by Jazzee"
     app_version: str = "1.0.0"
     debug: bool = True
-    cors_origins: List[str] = [
-        "http://localhost:5173", 
-        "http://127.0.0.1:5173",
-        "http://localhost:8501", 
-        "http://127.0.0.1:8501"
-    ]
+    # cors_origins: List[str] = [
+    #     "http://localhost:5173", 
+    #     "http://127.0.0.1:5173",
+    #     "http://localhost:8501", 
+    #     "http://127.0.0.1:8501"
+    # ]
+
+        # CORS Configuration - store as string, parse as needed
+    cors_origins_str: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8501,http://127.0.0.1:8501"
+    
+    @property
+    def cors_origins(self) -> List[str]:
+        """Parse CORS origins string into a list"""
+        return [origin.strip() for origin in self.cors_origins_str.split(',') if origin.strip()]
+    
     
     # Email Configuration
     smtp_host: str = "smtp.gmail.com"
