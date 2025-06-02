@@ -70,6 +70,13 @@ def create_contest(
                 detail=f"MCQ problem {problem_data.problem_id} not found"
             )
         
+        # Validate that question has tags assigned (cannot use untagged questions in contests)
+        if mcq_problem.needs_tags:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Question '{mcq_problem.title}' needs tags assigned before it can be used in contests. Please assign tags first."
+            )
+        
         # Create deep copy of the problem
         contest_problem = ContestProblem(
             contest_id=contest.id,
@@ -211,6 +218,9 @@ def get_contest(
     
     problem_responses = []
     for problem in problems:
+        # Parse correct options for UI to determine single vs multiple choice
+        correct_options = json.loads(problem.correct_options)
+        
         problem_response = ContestProblemResponse(
             id=problem.id,
             title=problem.title,
@@ -221,7 +231,8 @@ def get_contest(
             option_d=problem.option_d,
             marks=problem.marks,
             order_index=problem.order_index,
-            image_url=problem.image_url
+            image_url=problem.image_url,
+            correct_options=correct_options
         )
         problem_responses.append(problem_response)
     
@@ -531,4 +542,105 @@ def get_my_submission(
         submitted_at=submission.submitted_at,
         time_taken_seconds=submission.time_taken_seconds,
         is_auto_submitted=submission.is_auto_submitted
-    ) 
+    )
+
+
+@router.get("/{contest_id}/my-submission-details")
+def get_my_submission_details(
+    contest_id: str,
+    current_student: User = Depends(get_current_student),
+    session: Session = Depends(get_session)
+):
+    """Get detailed submission data with questions, answers, and explanations for review"""
+    contest = session.get(Contest, contest_id)
+    if not contest:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Contest not found"
+        )
+    
+    # Check if student is enrolled in the contest's course
+    enrollment = session.exec(
+        select(StudentCourse).where(
+            StudentCourse.student_id == current_student.id,
+            StudentCourse.course_id == contest.course_id,
+            StudentCourse.is_active == True
+        )
+    ).first()
+    
+    if not enrollment:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not enrolled in this contest's course"
+        )
+    
+    # Get student's submission
+    submission = session.exec(
+        select(Submission).where(
+            Submission.contest_id == contest_id,
+            Submission.student_id == current_student.id
+        )
+    ).first()
+    
+    if not submission:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No submission found for this contest"
+        )
+    
+    # Get contest problems with details
+    statement = select(ContestProblem).where(
+        ContestProblem.contest_id == contest_id
+    ).order_by(ContestProblem.order_index)
+    problems = session.exec(statement).all()
+    
+    # Parse submission data
+    student_answers = json.loads(submission.answers)
+    problem_scores = json.loads(submission.problem_scores)
+    
+    # Build detailed response
+    detailed_problems = []
+    for problem in problems:
+        correct_options = json.loads(problem.correct_options)
+        student_answer = student_answers.get(problem.id, [])
+        score_data = problem_scores.get(problem.id, {})
+        
+        detailed_problems.append({
+            "id": problem.id,
+            "title": problem.title,
+            "description": problem.description,
+            "option_a": problem.option_a,
+            "option_b": problem.option_b,
+            "option_c": problem.option_c,
+            "option_d": problem.option_d,
+            "explanation": problem.explanation,
+            "image_url": problem.image_url,
+            "marks": problem.marks,
+            "order_index": problem.order_index,
+            "correct_options": correct_options,
+            "student_answer": student_answer,
+            "score": score_data.get("score", 0),
+            "max_score": score_data.get("max_score", problem.marks),
+            "is_correct": score_data.get("score", 0) == problem.marks
+        })
+    
+    return {
+        "submission": {
+            "id": submission.id,
+            "contest_id": submission.contest_id,
+            "student_id": submission.student_id,
+            "total_score": submission.total_score,
+            "max_possible_score": submission.max_possible_score,
+            "submitted_at": submission.submitted_at,
+            "time_taken_seconds": submission.time_taken_seconds,
+            "is_auto_submitted": submission.is_auto_submitted
+        },
+        "contest": {
+            "id": contest.id,
+            "name": contest.name,
+            "description": contest.description,
+            "start_time": contest.start_time,
+            "end_time": contest.end_time
+        },
+        "problems": detailed_problems
+    } 

@@ -25,6 +25,9 @@ class MCQProblem(SQLModel, table=True):
     # Optional explanation
     explanation: Optional[str] = Field(default=None)
     
+    # Tag status - for tracking MCQs that need tags assigned
+    needs_tags: bool = Field(default=False, description="True if MCQ was imported without tags and needs tagging")
+    
     # Metadata
     created_by: str = Field(foreign_key="user.id")
     created_at: datetime = Field(default_factory=datetime.utcnow)

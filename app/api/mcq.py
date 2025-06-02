@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
 from fastapi.responses import StreamingResponse
-from sqlmodel import Session, select
+from sqlmodel import Session, select, func
 from typing import List, Optional
 from datetime import datetime
 from io import BytesIO
@@ -8,12 +8,15 @@ import json
 
 from app.core.database import get_session
 from app.models.mcq_problem import MCQProblem
+from app.models.tag import Tag, MCQTag
 from app.models.user import User
 from app.schemas.mcq import (
     MCQProblemCreate, 
     MCQProblemUpdate, 
     MCQProblemResponse, 
-    MCQProblemListResponse
+    MCQProblemListResponse,
+    MCQSearchFilters,
+    TagInfo
 )
 from app.utils.auth import get_current_admin
 
@@ -26,7 +29,7 @@ def create_mcq_problem(
     current_admin: User = Depends(get_current_admin),
     session: Session = Depends(get_session)
 ):
-    """Create a new MCQ problem"""
+    """Create a new MCQ problem with optional tags"""
     # Validate correct options
     valid_options = ["A", "B", "C", "D"]
     for option in problem_data.correct_options:
@@ -42,61 +45,142 @@ def create_mcq_problem(
             detail="At least one correct option must be specified"
         )
     
-    # Create MCQ problem
-    mcq_problem = MCQProblem(
-        title=problem_data.title,
-        description=problem_data.description,
-        option_a=problem_data.option_a,
-        option_b=problem_data.option_b,
-        option_c=problem_data.option_c,
-        option_d=problem_data.option_d,
-        correct_options=json.dumps(problem_data.correct_options),
-        explanation=problem_data.explanation,
-        created_by=current_admin.id
-    )
+    # Check if tags are provided for manual creation (UI requires tags)
+    if not problem_data.tag_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one tag is required for manual MCQ creation"
+        )
     
-    session.add(mcq_problem)
-    session.commit()
-    session.refresh(mcq_problem)
+    # Validate tags exist
+    tags = session.exec(
+        select(Tag).where(Tag.id.in_(problem_data.tag_ids))
+    ).all()
     
-    return MCQProblemResponse(
-        id=mcq_problem.id,
-        title=mcq_problem.title,
-        description=mcq_problem.description,
-        option_a=mcq_problem.option_a,
-        option_b=mcq_problem.option_b,
-        option_c=mcq_problem.option_c,
-        option_d=mcq_problem.option_d,
-        correct_options=mcq_problem.get_correct_options(),
-        explanation=mcq_problem.explanation,
-        created_by=mcq_problem.created_by,
-        created_at=mcq_problem.created_at,
-        updated_at=mcq_problem.updated_at
-    )
+    if len(tags) != len(problem_data.tag_ids):
+        found_tag_ids = [tag.id for tag in tags]
+        missing_tag_ids = [tag_id for tag_id in problem_data.tag_ids if tag_id not in found_tag_ids]
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Tags not found: {', '.join(missing_tag_ids)}"
+        )
+    
+    try:
+        # Create MCQ problem
+        mcq_problem = MCQProblem(
+            title=problem_data.title,
+            description=problem_data.description,
+            option_a=problem_data.option_a,
+            option_b=problem_data.option_b,
+            option_c=problem_data.option_c,
+            option_d=problem_data.option_d,
+            correct_options=json.dumps(problem_data.correct_options),
+            explanation=problem_data.explanation,
+            created_by=current_admin.id,
+            needs_tags=False  # Manual creation always has tags
+        )
+        
+        session.add(mcq_problem)
+        session.flush()  # Get the ID
+        
+        # Create tag relationships
+        for tag_id in problem_data.tag_ids:
+            mcq_tag = MCQTag(
+                mcq_id=mcq_problem.id,
+                tag_id=tag_id,
+                added_by=current_admin.id
+            )
+            session.add(mcq_tag)
+        
+        session.commit()
+        session.refresh(mcq_problem)
+        
+        # Get tags for response
+        tag_info = [
+            TagInfo(id=tag.id, name=tag.name, color=tag.color)
+            for tag in tags
+        ]
+        
+        return MCQProblemResponse(
+            id=mcq_problem.id,
+            title=mcq_problem.title,
+            description=mcq_problem.description,
+            option_a=mcq_problem.option_a,
+            option_b=mcq_problem.option_b,
+            option_c=mcq_problem.option_c,
+            option_d=mcq_problem.option_d,
+            correct_options=mcq_problem.get_correct_options(),
+            explanation=mcq_problem.explanation,
+            created_by=mcq_problem.created_by,
+            created_at=mcq_problem.created_at,
+            updated_at=mcq_problem.updated_at,
+            tags=tag_info,
+            needs_tags=mcq_problem.needs_tags
+        )
+    
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create MCQ problem: {str(e)}"
+        )
 
 
 @router.get("/", response_model=List[MCQProblemResponse])
 def list_mcq_problems(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
-    search: Optional[str] = Query(None),
+    search: Optional[str] = Query(None, description="Search by title or description"),
+    tag_ids: Optional[str] = Query(None, description="Comma-separated tag IDs to filter by"),
+    tag_names: Optional[str] = Query(None, description="Comma-separated tag names to filter by"),
+    created_by: Optional[str] = Query(None, description="Filter by creator"),
+    needs_tags: Optional[bool] = Query(None, description="Filter by questions that need tags"),
     current_admin: User = Depends(get_current_admin),
     session: Session = Depends(get_session)
 ):
-    """List MCQ problems with pagination and search"""
-    statement = select(MCQProblem)
+    """List MCQ problems with advanced filtering by tags and tag status"""
+    statement = select(MCQProblem).distinct()
     
     if search:
         statement = statement.where(
-            MCQProblem.title.contains(search) | 
-            MCQProblem.description.contains(search)
+            MCQProblem.title.ilike(f"%{search}%") | 
+            MCQProblem.description.ilike(f"%{search}%")
         )
+    
+    if created_by:
+        statement = statement.where(MCQProblem.created_by == created_by)
+    
+    if needs_tags is not None:
+        statement = statement.where(MCQProblem.needs_tags == needs_tags)
+    
+    # Handle tag filtering
+    if tag_ids:
+        tag_id_list = [tag_id.strip() for tag_id in tag_ids.split(",") if tag_id.strip()]
+        statement = statement.join(MCQTag, MCQProblem.id == MCQTag.mcq_id).where(
+            MCQTag.tag_id.in_(tag_id_list)
+        )
+    elif tag_names:
+        tag_name_list = [tag_name.strip() for tag_name in tag_names.split(",") if tag_name.strip()]
+        statement = statement.join(MCQTag, MCQProblem.id == MCQTag.mcq_id).join(
+            Tag, MCQTag.tag_id == Tag.id
+        ).where(Tag.name.in_(tag_name_list))
     
     statement = statement.offset(skip).limit(limit).order_by(MCQProblem.created_at.desc())
     problems = session.exec(statement).all()
     
-    return [
-        MCQProblemResponse(
+    # Get tags for each problem and build response
+    result = []
+    for problem in problems:
+        tags = session.exec(
+            select(Tag).join(MCQTag, Tag.id == MCQTag.tag_id).where(MCQTag.mcq_id == problem.id)
+        ).all()
+        
+        tag_info = [
+            TagInfo(id=tag.id, name=tag.name, color=tag.color)
+            for tag in tags
+        ]
+        
+        result.append(MCQProblemResponse(
             id=problem.id,
             title=problem.title,
             description=problem.description,
@@ -108,10 +192,63 @@ def list_mcq_problems(
             explanation=problem.explanation,
             created_by=problem.created_by,
             created_at=problem.created_at,
-            updated_at=problem.updated_at
+            updated_at=problem.updated_at,
+            tags=tag_info,
+            needs_tags=problem.needs_tags
+        ))
+    
+    return result
+
+
+@router.get("/list", response_model=List[MCQProblemListResponse])
+def list_mcq_problems_simplified(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+    search: Optional[str] = Query(None),
+    tag_ids: Optional[str] = Query(None, description="Comma-separated tag IDs"),
+    current_admin: User = Depends(get_current_admin),
+    session: Session = Depends(get_session)
+):
+    """Simplified list of MCQ problems for UI lists"""
+    statement = select(MCQProblem).distinct()
+    
+    if search:
+        statement = statement.where(
+            MCQProblem.title.ilike(f"%{search}%") | 
+            MCQProblem.description.ilike(f"%{search}%")
         )
-        for problem in problems
-    ]
+    
+    if tag_ids:
+        tag_id_list = [tag_id.strip() for tag_id in tag_ids.split(",") if tag_id.strip()]
+        statement = statement.join(MCQTag, MCQProblem.id == MCQTag.mcq_id).where(
+            MCQTag.tag_id.in_(tag_id_list)
+        )
+    
+    statement = statement.offset(skip).limit(limit).order_by(MCQProblem.created_at.desc())
+    problems = session.exec(statement).all()
+    
+    # Get tags for each problem
+    result = []
+    for problem in problems:
+        tags = session.exec(
+            select(Tag).join(MCQTag, Tag.id == MCQTag.tag_id).where(MCQTag.mcq_id == problem.id)
+        ).all()
+        
+        tag_info = [
+            TagInfo(id=tag.id, name=tag.name, color=tag.color)
+            for tag in tags
+        ]
+        
+        result.append(MCQProblemListResponse(
+            id=problem.id,
+            title=problem.title,
+            description=problem.description,
+            created_at=problem.created_at,
+            tags=tag_info,
+            needs_tags=problem.needs_tags
+        ))
+    
+    return result
 
 
 @router.get("/{problem_id}", response_model=MCQProblemResponse)
@@ -120,13 +257,23 @@ def get_mcq_problem(
     current_admin: User = Depends(get_current_admin),
     session: Session = Depends(get_session)
 ):
-    """Get a specific MCQ problem"""
+    """Get a specific MCQ problem with its tags"""
     problem = session.get(MCQProblem, problem_id)
     if not problem:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="MCQ problem not found"
         )
+    
+    # Get tags for this problem
+    tags = session.exec(
+        select(Tag).join(MCQTag, Tag.id == MCQTag.tag_id).where(MCQTag.mcq_id == problem_id)
+    ).all()
+    
+    tag_info = [
+        TagInfo(id=tag.id, name=tag.name, color=tag.color)
+        for tag in tags
+    ]
     
     return MCQProblemResponse(
         id=problem.id,
@@ -140,7 +287,9 @@ def get_mcq_problem(
         explanation=problem.explanation,
         created_by=problem.created_by,
         created_at=problem.created_at,
-        updated_at=problem.updated_at
+        updated_at=problem.updated_at,
+        tags=tag_info,
+        needs_tags=problem.needs_tags
     )
 
 
@@ -151,7 +300,7 @@ def update_mcq_problem(
     current_admin: User = Depends(get_current_admin),
     session: Session = Depends(get_session)
 ):
-    """Update an MCQ problem"""
+    """Update an MCQ problem and its tags"""
     problem = session.get(MCQProblem, problem_id)
     if not problem:
         raise HTTPException(
@@ -175,34 +324,98 @@ def update_mcq_problem(
                 detail="At least one correct option must be specified"
             )
     
-    # Update fields
-    update_data = problem_data.dict(exclude_unset=True)
-    for field, value in update_data.items():
-        if field == "correct_options":
-            setattr(problem, field, json.dumps(value))
+    # Validate tags if provided
+    new_tags = []
+    if problem_data.tag_ids is not None:
+        tags = session.exec(
+            select(Tag).where(Tag.id.in_(problem_data.tag_ids))
+        ).all()
+        
+        if len(tags) != len(problem_data.tag_ids):
+            found_tag_ids = [tag.id for tag in tags]
+            missing_tag_ids = [tag_id for tag_id in problem_data.tag_ids if tag_id not in found_tag_ids]
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Tags not found: {', '.join(missing_tag_ids)}"
+            )
+        new_tags = tags
+    
+    try:
+        # Update MCQ problem fields
+        update_data = problem_data.dict(exclude_unset=True, exclude={'tag_ids'})
+        for field, value in update_data.items():
+            if field == "correct_options":
+                setattr(problem, field, json.dumps(value))
+            else:
+                setattr(problem, field, value)
+        
+        problem.updated_at = datetime.utcnow()
+        
+        # Update tags if provided
+        if problem_data.tag_ids is not None:
+            # Remove existing tag relationships
+            existing_mcq_tags = session.exec(
+                select(MCQTag).where(MCQTag.mcq_id == problem_id)
+            ).all()
+            
+            for mcq_tag in existing_mcq_tags:
+                session.delete(mcq_tag)
+            
+            # Add new tag relationships
+            for tag_id in problem_data.tag_ids:
+                mcq_tag = MCQTag(
+                    mcq_id=problem_id,
+                    tag_id=tag_id,
+                    added_by=current_admin.id
+                )
+                session.add(mcq_tag)
+            
+            # Update needs_tags status based on whether tags are assigned
+            if problem_data.tag_ids:  # If tags are being assigned
+                problem.needs_tags = False
+            else:  # If all tags are being removed
+                problem.needs_tags = True
+        
+        session.add(problem)
+        session.commit()
+        session.refresh(problem)
+        
+        # Get current tags for response
+        if problem_data.tag_ids is not None:
+            current_tags = new_tags
         else:
-            setattr(problem, field, value)
+            current_tags = session.exec(
+                select(Tag).join(MCQTag, Tag.id == MCQTag.tag_id).where(MCQTag.mcq_id == problem_id)
+            ).all()
+        
+        tag_info = [
+            TagInfo(id=tag.id, name=tag.name, color=tag.color)
+            for tag in current_tags
+        ]
+        
+        return MCQProblemResponse(
+            id=problem.id,
+            title=problem.title,
+            description=problem.description,
+            option_a=problem.option_a,
+            option_b=problem.option_b,
+            option_c=problem.option_c,
+            option_d=problem.option_d,
+            correct_options=problem.get_correct_options(),
+            explanation=problem.explanation,
+            created_by=problem.created_by,
+            created_at=problem.created_at,
+            updated_at=problem.updated_at,
+            tags=tag_info,
+            needs_tags=problem.needs_tags
+        )
     
-    problem.updated_at = datetime.utcnow()
-    
-    session.add(problem)
-    session.commit()
-    session.refresh(problem)
-    
-    return MCQProblemResponse(
-        id=problem.id,
-        title=problem.title,
-        description=problem.description,
-        option_a=problem.option_a,
-        option_b=problem.option_b,
-        option_c=problem.option_c,
-        option_d=problem.option_d,
-        correct_options=problem.get_correct_options(),
-        explanation=problem.explanation,
-        created_by=problem.created_by,
-        created_at=problem.created_at,
-        updated_at=problem.updated_at
-    )
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update MCQ problem: {str(e)}"
+        )
 
 
 @router.delete("/{problem_id}")
@@ -211,7 +424,7 @@ def delete_mcq_problem(
     current_admin: User = Depends(get_current_admin),
     session: Session = Depends(get_session)
 ):
-    """Delete an MCQ problem"""
+    """Delete an MCQ problem and its tag relationships"""
     problem = session.get(MCQProblem, problem_id)
     if not problem:
         raise HTTPException(
@@ -219,24 +432,46 @@ def delete_mcq_problem(
             detail="MCQ problem not found"
         )
     
-    session.delete(problem)
-    session.commit()
+    try:
+        # Delete tag relationships first
+        mcq_tags = session.exec(
+            select(MCQTag).where(MCQTag.mcq_id == problem_id)
+        ).all()
+        
+        for mcq_tag in mcq_tags:
+            session.delete(mcq_tag)
+        
+        # Delete the MCQ problem
+        session.delete(problem)
+        session.commit()
+        
+        return {"message": "MCQ problem and its tag relationships deleted successfully"}
     
-    return {"message": "MCQ problem deleted successfully"}
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete MCQ problem: {str(e)}"
+        )
 
 
 @router.get("/template/download")
 def download_mcq_template(
     current_admin: User = Depends(get_current_admin)
 ):
-    """Download CSV template for bulk MCQ import"""
-    # Create clean CSV content without comments for better spreadsheet compatibility
+    """Download CSV template for bulk MCQ import (tags will be assigned after import)"""
+    # Create clean CSV content without tag_names column
     csv_content = """title,description,option_a,option_b,option_c,option_d,correct_options,explanation
 What is the capital of France?,Choose the correct capital city,Paris,London,Berlin,Rome,A,Paris is the capital and largest city of France
 Which of the following are prime numbers?,Select all prime numbers,2,4,5,6,"A,C","Prime numbers are natural numbers greater than 1 that have no positive divisors other than 1 and themselves"
 What is 2 + 2?,Basic arithmetic question,3,4,5,6,B,Simple addition: 2 + 2 = 4
 Which programming language is known for web development?,Choose the most popular option,Java,JavaScript,Python,C++,B,JavaScript is widely used for both front-end and back-end web development
-What is the largest planet in our solar system?,Select the correct planet,Earth,Mars,Jupiter,Venus,C,Jupiter is the largest planet in our solar system"""
+What is the largest planet in our solar system?,Select the correct planet,Earth,Mars,Jupiter,Venus,C,Jupiter is the largest planet in our solar system
+What is the process of photosynthesis?,Choose the correct description,Plants converting sunlight to energy,Animals breathing oxygen,Water evaporation,Rock formation,A,Photosynthesis is how plants convert light energy into chemical energy
+Who wrote Romeo and Juliet?,Select the correct author,Charles Dickens,William Shakespeare,Jane Austen,Mark Twain,B,William Shakespeare wrote this famous tragedy in the 1590s
+What is the chemical symbol for gold?,Choose the correct symbol,Au,Ag,Fe,Cu,A,Au comes from the Latin word 'aurum' meaning gold
+In which year did World War II end?,Select the correct year,1944,1945,1946,1947,B,World War II ended in 1945 with the surrender of Japan
+What is the square root of 64?,Choose the correct answer,6,7,8,9,C,The square root of 64 is 8 because 8 × 8 = 64"""
     
     # Create CSV file
     output = BytesIO()
@@ -245,7 +480,7 @@ What is the largest planet in our solar system?,Select the correct planet,Earth,
     
     # Generate filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"mcq_import_template_{timestamp}.csv"
+    filename = f"mcq_import_template_with_tags_{timestamp}.csv"
     
     return StreamingResponse(
         BytesIO(output.read()),
@@ -260,7 +495,7 @@ def bulk_import_mcq_problems(
     current_admin: User = Depends(get_current_admin),
     session: Session = Depends(get_session)
 ):
-    """Bulk import MCQ problems from CSV file"""
+    """Bulk import MCQ problems from CSV file with tag support"""
     if not file.filename.endswith(('.csv', '.txt')):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -310,7 +545,8 @@ def bulk_import_mcq_problems(
             "successful": 0,
             "failed": 0,
             "errors": [],
-            "created_problems": []
+            "created_problems": [],
+            "created_tags": []
         }
         
         for line_num, line in enumerate(lines[1:], start=2):  # Start from row 2 (after header)
@@ -396,6 +632,9 @@ def bulk_import_mcq_problems(
                     results["failed"] += 1
                     continue
                 
+                # Determine if MCQ needs tags (imported questions always need tags)
+                needs_tags = True  # All imported questions need tags assigned later
+                
                 # Create MCQ problem
                 mcq_problem = MCQProblem(
                     title=title,
@@ -406,16 +645,21 @@ def bulk_import_mcq_problems(
                     option_d=option_d,
                     correct_options=json.dumps(correct_options),
                     explanation=explanation,
-                    created_by=current_admin.id
+                    created_by=current_admin.id,
+                    needs_tags=needs_tags  # Mark as needing tags assignment
                 )
                 
                 session.add(mcq_problem)
                 session.flush()  # Get the ID
                 
+                # No tag relationships created during import - tags assigned later by admin
+                
                 results["created_problems"].append({
                     "id": mcq_problem.id,
                     "title": mcq_problem.title,
-                    "correct_options": correct_options
+                    "correct_options": correct_options,
+                    "tags": 0,  # No tags assigned during import
+                    "needs_tags": needs_tags
                 })
                 results["successful"] += 1
                 
@@ -426,6 +670,9 @@ def bulk_import_mcq_problems(
         
         # Commit all successful creations
         session.commit()
+        
+        # Remove duplicates from created_tags
+        results["created_tags"] = list(set(results["created_tags"]))
         
         return results
         

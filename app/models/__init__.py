@@ -4,6 +4,7 @@ from .student_course import StudentCourse
 from .mcq_problem import MCQProblem
 from .contest import Contest, ContestProblem, ContestStatus
 from .submission import Submission
+from .tag import Tag, MCQTag
 
 __all__ = [
     "User",
@@ -14,5 +15,7 @@ __all__ = [
     "Contest",
     "ContestProblem",
     "ContestStatus",
-    "Submission"
+    "Submission",
+    "Tag",
+    "MCQTag"
 ]

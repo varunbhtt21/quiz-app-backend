@@ -35,6 +35,7 @@ class ContestProblemResponse(BaseModel):
     marks: float
     order_index: int
     image_url: Optional[str] = None
+    correct_options: List[str]  # Include for UI to determine single vs multiple choice
 
 
 class ContestResponse(BaseModel):
