@@ -179,7 +179,7 @@ def delete_user(
         from app.models.student_course import StudentCourse
         from app.models.submission import Submission
         from app.models.course import Course
-        from app.models.contest import Contest
+        from app.models.contest import Contest, ContestProblem
         from app.models.tag import Tag, MCQTag
         from app.models.mcq_problem import MCQProblem
         
@@ -269,13 +269,35 @@ def delete_user(
                 for enrollment in course_enrollments:
                     session.delete(enrollment)
                 
-                # Delete course contests
+                # Delete course contests and their dependencies
                 try:
                     course_contests = session.exec(
                         select(Contest).where(Contest.course_id == course.id)
                     ).all()
+                    
+                    for contest in course_contests:
+                        # Delete submissions for this contest
+                        submissions = session.exec(
+                            select(Submission).where(Submission.contest_id == contest.id)
+                        ).all()
+                        for submission in submissions:
+                            session.delete(submission)
+                        
+                        # Delete contest problems for this contest
+                        contest_problems = session.exec(
+                            select(ContestProblem).where(ContestProblem.contest_id == contest.id)
+                        ).all()
+                        for contest_problem in contest_problems:
+                            session.delete(contest_problem)
+                        
+                        # CRITICAL FIX: Flush to execute dependent record deletions immediately
+                        if submissions or contest_problems:
+                            session.flush()
+                    
+                    # Now delete the contests
                     for contest in course_contests:
                         session.delete(contest)
+                        
                 except Exception:
                     # Contest model might not exist or have different structure
                     pass

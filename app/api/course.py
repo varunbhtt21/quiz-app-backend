@@ -207,11 +207,14 @@ def delete_course(
             select(StudentCourse).where(StudentCourse.course_id == course_id)
         ).all())
         
-        # Import Contest model here to avoid circular imports
-        from app.models.contest import Contest
-        contest_count = len(session.exec(
+        # Import Contest and related models to avoid circular imports
+        from app.models.contest import Contest, ContestProblem
+        from app.models.submission import Submission
+        
+        contests = session.exec(
             select(Contest).where(Contest.course_id == course_id)
-        ).all())
+        ).all()
+        contest_count = len(contests)
         
         # Delete related records in order to avoid foreign key constraints
         
@@ -222,14 +225,36 @@ def delete_course(
         for enrollment in enrollments:
             session.delete(enrollment)
         
-        # 2. Delete all contests (which will cascade to contest problems and submissions)
-        contests = session.exec(
-            select(Contest).where(Contest.course_id == course_id)
-        ).all()
+        # 2. For each contest, delete dependent records first
+        for contest in contests:
+            # Delete submissions for this contest
+            submissions = session.exec(
+                select(Submission).where(Submission.contest_id == contest.id)
+            ).all()
+            for submission in submissions:
+                session.delete(submission)
+            
+            # Delete contest problems for this contest
+            contest_problems = session.exec(
+                select(ContestProblem).where(ContestProblem.contest_id == contest.id)
+            ).all()
+            for contest_problem in contest_problems:
+                session.delete(contest_problem)
+            
+            # CRITICAL FIX: Flush to execute dependent record deletions immediately
+            # This prevents foreign key constraint violations when deleting Contest
+            if submissions or contest_problems:
+                session.flush()
+        
+        # 3. Now delete all contests (dependent records are already deleted)
         for contest in contests:
             session.delete(contest)
         
-        # 3. Finally delete the course
+        # Flush contest deletions before deleting course
+        if contests:
+            session.flush()
+        
+        # 4. Finally delete the course
         session.delete(course)
         session.commit()
     
