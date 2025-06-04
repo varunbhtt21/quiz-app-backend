@@ -43,6 +43,7 @@ class MCQProblemResponse(BaseModel):
     option_d: str
     correct_options: List[str]
     explanation: Optional[str]
+    image_url: Optional[str] = None
     created_by: str
     created_at: datetime
     updated_at: datetime
@@ -54,6 +55,7 @@ class MCQProblemListResponse(BaseModel):
     id: str
     title: str
     description: str
+    image_url: Optional[str] = None
     created_at: datetime
     tags: List[TagInfo] = Field(default_factory=list, description="Tags associated with this MCQ")
     needs_tags: bool = Field(default=False, description="True if MCQ was imported without tags and needs tagging")

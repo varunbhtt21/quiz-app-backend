@@ -111,6 +111,7 @@ def create_mcq_problem(
             option_d=mcq_problem.option_d,
             correct_options=mcq_problem.get_correct_options(),
             explanation=mcq_problem.explanation,
+            image_url=mcq_problem.image_url,
             created_by=mcq_problem.created_by,
             created_at=mcq_problem.created_at,
             updated_at=mcq_problem.updated_at,
@@ -190,6 +191,7 @@ def list_mcq_problems(
             option_d=problem.option_d,
             correct_options=problem.get_correct_options(),
             explanation=problem.explanation,
+            image_url=problem.image_url,
             created_by=problem.created_by,
             created_at=problem.created_at,
             updated_at=problem.updated_at,
@@ -243,6 +245,7 @@ def list_mcq_problems_simplified(
             id=problem.id,
             title=problem.title,
             description=problem.description,
+            image_url=problem.image_url,
             created_at=problem.created_at,
             tags=tag_info,
             needs_tags=problem.needs_tags
@@ -285,6 +288,7 @@ def get_mcq_problem(
         option_d=problem.option_d,
         correct_options=problem.get_correct_options(),
         explanation=problem.explanation,
+        image_url=problem.image_url,
         created_by=problem.created_by,
         created_at=problem.created_at,
         updated_at=problem.updated_at,
@@ -403,6 +407,7 @@ def update_mcq_problem(
             option_d=problem.option_d,
             correct_options=problem.get_correct_options(),
             explanation=problem.explanation,
+            image_url=problem.image_url,
             created_by=problem.created_by,
             created_at=problem.created_at,
             updated_at=problem.updated_at,
@@ -424,7 +429,7 @@ def delete_mcq_problem(
     current_admin: User = Depends(get_current_admin),
     session: Session = Depends(get_session)
 ):
-    """Delete an MCQ problem and its tag relationships"""
+    """Delete an MCQ problem, its tag relationships, and associated image file"""
     problem = session.get(MCQProblem, problem_id)
     if not problem:
         raise HTTPException(
@@ -433,6 +438,13 @@ def delete_mcq_problem(
         )
     
     try:
+        # Store image info for deletion after successful database operations
+        image_file_path = None
+        if problem.image_url:
+            from pathlib import Path
+            filename = problem.image_url.split("/")[-1]
+            image_file_path = Path("uploads/mcq_images") / filename
+        
         # Delete tag relationships first
         mcq_tags = session.exec(
             select(MCQTag).where(MCQTag.mcq_id == problem_id)
@@ -441,11 +453,28 @@ def delete_mcq_problem(
         for mcq_tag in mcq_tags:
             session.delete(mcq_tag)
         
-        # Delete the MCQ problem
+        # CRITICAL FIX: Flush to execute MCQTag deletions immediately
+        # This prevents foreign key constraint violations when deleting MCQProblem
+        if mcq_tags:
+            session.flush()
+        
+        # Delete the MCQ problem from database
         session.delete(problem)
         session.commit()
         
-        return {"message": "MCQ problem and its tag relationships deleted successfully"}
+        # Only delete image file AFTER successful database operations
+        if image_file_path and image_file_path.exists():
+            import os
+            try:
+                os.remove(image_file_path)
+                print(f"Deleted image file: {image_file_path}")
+            except Exception as img_error:
+                # Log the error but don't fail since database deletion succeeded
+                print(f"Warning: Failed to delete image file {image_file_path}: {str(img_error)}")
+        
+        return {
+            "message": "MCQ problem, its tag relationships, and associated image deleted successfully"
+        }
     
     except Exception as e:
         session.rollback()
@@ -686,4 +715,112 @@ def bulk_import_mcq_problems(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Error processing file: {str(e)}"
+        )
+
+
+@router.post("/{problem_id}/upload-image")
+def upload_mcq_image(
+    problem_id: str,
+    image: UploadFile = File(...),
+    current_admin: User = Depends(get_current_admin),
+    session: Session = Depends(get_session)
+):
+    """Upload an image for an MCQ problem"""
+    # Check if problem exists
+    problem = session.get(MCQProblem, problem_id)
+    if not problem:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="MCQ problem not found"
+        )
+    
+    # Validate file type
+    if not image.content_type or not image.content_type.startswith("image/"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File must be an image"
+        )
+    
+    # Validate file size (5MB limit)
+    if image.size and image.size > 5 * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Image size must be less than 5MB"
+        )
+    
+    try:
+        import os
+        import uuid
+        from pathlib import Path
+        
+        # Create uploads directory if it doesn't exist
+        upload_dir = Path("uploads/mcq_images")
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Generate unique filename
+        file_extension = image.filename.split(".")[-1] if image.filename else "jpg"
+        unique_filename = f"{uuid.uuid4()}.{file_extension}"
+        file_path = upload_dir / unique_filename
+        
+        # Save the file
+        with open(file_path, "wb") as buffer:
+            content = image.file.read()
+            buffer.write(content)
+        
+        # Update the problem with image URL
+        problem.image_url = f"/uploads/mcq_images/{unique_filename}"
+        session.commit()
+        
+        return {
+            "message": "Image uploaded successfully",
+            "image_url": problem.image_url
+        }
+        
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload image: {str(e)}"
+        )
+
+
+@router.delete("/{problem_id}/remove-image")
+def remove_mcq_image(
+    problem_id: str,
+    current_admin: User = Depends(get_current_admin),
+    session: Session = Depends(get_session)
+):
+    """Remove the image from an MCQ problem"""
+    # Check if problem exists
+    problem = session.get(MCQProblem, problem_id)
+    if not problem:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="MCQ problem not found"
+        )
+    
+    try:
+        # Remove file from disk if it exists
+        if problem.image_url:
+            import os
+            from pathlib import Path
+            
+            # Extract filename from URL
+            filename = problem.image_url.split("/")[-1]
+            file_path = Path("uploads/mcq_images") / filename
+            
+            if file_path.exists():
+                os.remove(file_path)
+        
+        # Remove image URL from database
+        problem.image_url = None
+        session.commit()
+        
+        return {"message": "Image removed successfully"}
+        
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to remove image: {str(e)}"
         ) 
