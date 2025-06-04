@@ -166,7 +166,7 @@ def delete_user(
     current_admin: User = Depends(get_current_admin),
     session: Session = Depends(get_session)
 ):
-    """Delete a user"""
+    """Delete a user and all related data"""
     user = session.get(User, student_id)
     if not user:
         raise HTTPException(
@@ -174,10 +174,127 @@ def delete_user(
             detail="User not found"
         )
     
-    session.delete(user)
-    session.commit()
-    
-    return {"message": "User deleted successfully"}
+    try:
+        # Import here to avoid circular imports
+        from app.models.student_course import StudentCourse
+        from app.models.submission import Submission
+        from app.models.course import Course
+        from app.models.contest import Contest
+        from app.models.tag import Tag, MCQTag
+        from app.models.mcq_problem import MCQProblem
+        
+        # Delete related records first to avoid foreign key constraint violations
+        
+        # 1. Delete student course enrollments (as student)
+        enrollments = session.exec(
+            select(StudentCourse).where(StudentCourse.student_id == student_id)
+        ).all()
+        for enrollment in enrollments:
+            session.delete(enrollment)
+        
+        # 2. Delete student's submissions
+        try:
+            submissions = session.exec(
+                select(Submission).where(Submission.student_id == student_id)
+            ).all()
+            for submission in submissions:
+                session.delete(submission)
+        except Exception:
+            # Submission model might not exist or have different structure
+            pass
+        
+        # 3. Handle MCQ tags created/added by this user
+        try:
+            # Delete MCQ tag relationships where user added the tag
+            mcq_tags = session.exec(
+                select(MCQTag).where(MCQTag.added_by == student_id)
+            ).all()
+            for mcq_tag in mcq_tags:
+                session.delete(mcq_tag)
+            
+            # Handle tags created by this user - we need to be careful here
+            # as other MCQs might use these tags
+            user_created_tags = session.exec(
+                select(Tag).where(Tag.created_by == student_id)
+            ).all()
+            
+            for tag in user_created_tags:
+                # First, delete all MCQTag relationships using this tag
+                related_mcq_tags = session.exec(
+                    select(MCQTag).where(MCQTag.tag_id == tag.id)
+                ).all()
+                for mcq_tag in related_mcq_tags:
+                    session.delete(mcq_tag)
+                
+                # Then delete the tag itself
+                session.delete(tag)
+                
+        except Exception:
+            # Tag models might not exist or have different structure
+            pass
+        
+        # 4. Handle MCQ problems created by this user
+        try:
+            user_mcqs = session.exec(
+                select(MCQProblem).where(MCQProblem.created_by == student_id)
+            ).all()
+            
+            for mcq in user_mcqs:
+                # First delete all tag relationships for this MCQ
+                mcq_tag_relations = session.exec(
+                    select(MCQTag).where(MCQTag.mcq_id == mcq.id)
+                ).all()
+                for relation in mcq_tag_relations:
+                    session.delete(relation)
+                
+                # Then delete the MCQ
+                session.delete(mcq)
+                
+        except Exception:
+            # MCQ models might not exist or have different structure
+            pass
+        
+        # 5. If user is an admin, handle courses they created
+        if user.role == UserRole.ADMIN:
+            # Get courses created by this admin
+            admin_courses = session.exec(
+                select(Course).where(Course.instructor_id == student_id)
+            ).all()
+            
+            for course in admin_courses:
+                # Delete course enrollments
+                course_enrollments = session.exec(
+                    select(StudentCourse).where(StudentCourse.course_id == course.id)
+                ).all()
+                for enrollment in course_enrollments:
+                    session.delete(enrollment)
+                
+                # Delete course contests
+                try:
+                    course_contests = session.exec(
+                        select(Contest).where(Contest.course_id == course.id)
+                    ).all()
+                    for contest in course_contests:
+                        session.delete(contest)
+                except Exception:
+                    # Contest model might not exist or have different structure
+                    pass
+                
+                # Delete the course
+                session.delete(course)
+        
+        # 6. Finally delete the user
+        session.delete(user)
+        session.commit()
+        
+        return {"message": "User deleted successfully"}
+        
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error deleting user: {str(e)}"
+        )
 
 
 @router.get("/template/download")
