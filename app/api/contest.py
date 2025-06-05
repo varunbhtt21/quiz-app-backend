@@ -13,7 +13,7 @@ from app.models.user import User, UserRole
 from app.models.student_course import StudentCourse
 from app.schemas.contest import (
     ContestCreate, ContestUpdate, ContestResponse, ContestDetailResponse,
-    ContestProblemResponse, SubmissionCreate, SubmissionResponse
+    ContestProblemResponse, SubmissionCreate, SubmissionResponse, ContestStatusUpdate
 )
 from app.utils.auth import get_current_admin, get_current_user, get_current_student
 from app.utils.time_utils import utc_timestamp_ms, now_utc, to_utc, parse_iso_to_utc
@@ -267,7 +267,7 @@ def list_contests(
     statement = select(Contest)
     
     if current_user.role == UserRole.STUDENT:
-        # Students only see contests from courses they are enrolled in
+        # Students only see contests from courses they are enrolled in AND active contests
         # Get student's enrolled course IDs
         student_courses = session.exec(
             select(StudentCourse.course_id).where(
@@ -279,7 +279,10 @@ def list_contests(
         if not student_courses:
             return []
         
-        statement = statement.where(Contest.course_id.in_(student_courses))
+        statement = statement.where(
+            Contest.course_id.in_(student_courses),
+            Contest.is_active == True  # Only show active contests to students
+        )
     elif course_id:
         # Admin can filter by course_id
         statement = statement.where(Contest.course_id == course_id)
@@ -301,12 +304,14 @@ def list_contests(
             course_id=contest.course_id,
             name=contest.name,
             description=contest.description,
+            is_active=contest.is_active,
             start_time=contest.start_time,
             end_time=contest.end_time,
             status=contest.get_status(),
             created_at=contest.created_at,
             timezone="UTC",
-            duration_seconds=int((contest.end_time - contest.start_time).total_seconds())
+            duration_seconds=int((contest.end_time - contest.start_time).total_seconds()),
+            can_be_deleted=contest.can_be_deleted()
         )
         for contest in contests
     ]
@@ -342,6 +347,14 @@ def get_contest(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied to this contest"
             )
+        
+        # Check if contest is active for students
+        if not contest.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Contest not found"  # Don't reveal that contest exists but is disabled
+            )
+            
     elif current_user.role == UserRole.ADMIN:
         # Check if admin owns the course
         course = session.get(Course, contest.course_id)
@@ -403,8 +416,8 @@ def get_contest(
         "time_to_start_seconds": time_to_start,
         "time_to_end_seconds": time_to_end,
         "time_remaining_seconds": time_remaining,
-        "can_submit": contest_status == ContestStatus.IN_PROGRESS,
-        "is_accessible": contest_status != ContestStatus.NOT_STARTED
+        "can_submit": contest_status == ContestStatus.IN_PROGRESS and contest.is_active,
+        "is_accessible": contest_status != ContestStatus.NOT_STARTED and contest.is_active
     }
     
     return ContestDetailResponse(
@@ -412,12 +425,14 @@ def get_contest(
         course_id=contest.course_id,
         name=contest.name,
         description=contest.description,
+        is_active=contest.is_active,
         start_time=contest.start_time,
         end_time=contest.end_time,
         status=contest_status,
         created_at=contest.created_at,
         timezone="UTC",
         duration_seconds=int((contest.end_time - contest.start_time).total_seconds()),
+        can_be_deleted=contest.can_be_deleted(),
         problems=problem_responses,
         time_info=time_info
     )
@@ -977,7 +992,7 @@ def get_my_submission_details(
             "end_time": contest.end_time
         },
         "problems": detailed_problems
-    }
+    } 
 
 
 @router.post("/{contest_id}/auto-submit", response_model=SubmissionResponse)
@@ -1133,4 +1148,123 @@ def auto_submit_contest(
         is_auto_submitted=submission.is_auto_submitted,
         percentage=round(percentage, 2),
         timezone="UTC"
+    ) 
+
+
+@router.delete("/{contest_id}", response_model=ContestResponse)
+def delete_contest(
+    contest_id: str,
+    current_admin: User = Depends(get_current_admin),
+    session: Session = Depends(get_session)
+):
+    """Delete a contest (only if not started)"""
+    contest = session.get(Contest, contest_id)
+    if not contest:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Contest not found"
+        )
+    
+    # Check if admin owns the course
+    course = session.get(Course, contest.course_id)
+    if not course or course.instructor_id != current_admin.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this contest"
+        )
+    
+    # Check if contest can be deleted (only if not started)
+    if not contest.can_be_deleted():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete contest that has already started"
+        )
+    
+    # Check if there are any submissions for this contest
+    existing_submissions = session.exec(
+        select(Submission).where(Submission.contest_id == contest_id)
+    ).first()
+    
+    if existing_submissions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete contest with existing submissions"
+        )
+    
+    # Store contest data for response before deletion
+    contest_response_data = {
+        "id": contest.id,
+        "course_id": contest.course_id,
+        "name": contest.name,
+        "description": contest.description,
+        "is_active": contest.is_active,
+        "start_time": contest.start_time,
+        "end_time": contest.end_time,
+        "status": contest.get_status(),
+        "created_at": contest.created_at,
+        "timezone": "UTC",
+        "duration_seconds": int((contest.end_time - contest.start_time).total_seconds()),
+        "can_be_deleted": contest.can_be_deleted()
+    }
+    
+    # Delete contest problems first
+    contest_problems = session.exec(
+        select(ContestProblem).where(ContestProblem.contest_id == contest_id)
+    ).all()
+    for problem in contest_problems:
+        session.delete(problem)
+    
+    # Delete contest
+    session.delete(contest)
+    session.commit()
+    
+    return ContestResponse(**contest_response_data)
+
+
+@router.patch("/{contest_id}/status", response_model=ContestResponse)
+def update_contest_status(
+    contest_id: str,
+    status_data: ContestStatusUpdate,
+    current_admin: User = Depends(get_current_admin),
+    session: Session = Depends(get_session)
+):
+    """Enable or disable a contest"""
+    contest = session.get(Contest, contest_id)
+    if not contest:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Contest not found"
+        )
+    
+    # Check if admin owns the course
+    course = session.get(Course, contest.course_id)
+    if not course or course.instructor_id != current_admin.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this contest"
+        )
+    
+    # Update contest active status
+    contest.is_active = status_data.is_active
+    
+    # Update timestamp
+    contest.updated_at = now_utc()
+    
+    session.add(contest)
+    session.commit()
+    session.refresh(contest)
+    
+    return ContestResponse(
+        id=contest.id,
+        course_id=contest.course_id,
+        name=contest.name,
+        description=contest.description,
+        is_active=contest.is_active,
+        start_time=contest.start_time,
+        end_time=contest.end_time,
+        status=contest.get_status(),
+        created_at=contest.created_at,
+        timezone="UTC",
+        duration_seconds=int((contest.end_time - contest.start_time).total_seconds()),
+        can_be_deleted=contest.can_be_deleted()
     ) 

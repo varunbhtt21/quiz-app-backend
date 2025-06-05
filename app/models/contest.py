@@ -18,6 +18,9 @@ class Contest(SQLModel, table=True):
     name: str = Field(index=True)
     description: Optional[str] = Field(default=None)
     
+    # Contest visibility control
+    is_active: bool = Field(default=True, description="Whether contest is enabled/visible to students")
+    
     # Time constraints - Use timezone-aware datetime with TIMESTAMPTZ
     start_time: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     end_time: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
@@ -53,6 +56,10 @@ class Contest(SQLModel, table=True):
             return ContestStatus.ENDED
         else:
             return ContestStatus.IN_PROGRESS
+    
+    def can_be_deleted(self) -> bool:
+        """Check if contest can be deleted (only if not started)"""
+        return self.get_status() == ContestStatus.NOT_STARTED
     
     class Config:
         use_enum_values = True

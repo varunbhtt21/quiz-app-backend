@@ -24,6 +24,10 @@ class ContestUpdate(BaseModel):
     end_time: Optional[datetime] = Field(None, description="Contest end time (timezone-aware)")
 
 
+class ContestStatusUpdate(BaseModel):
+    is_active: bool = Field(description="Whether contest should be enabled/disabled")
+
+
 class ContestProblemResponse(BaseModel):
     id: str
     title: str
@@ -43,6 +47,7 @@ class ContestResponse(BaseModel):
     course_id: str
     name: str
     description: Optional[str]
+    is_active: bool = Field(description="Whether contest is enabled/visible to students")
     start_time: datetime = Field(description="Contest start time in UTC")
     end_time: datetime = Field(description="Contest end time in UTC")
     status: ContestStatus
@@ -51,6 +56,7 @@ class ContestResponse(BaseModel):
     # Additional timezone information for frontend
     timezone: str = Field(default="UTC", description="Timezone of the timestamps")
     duration_seconds: Optional[int] = Field(None, description="Contest duration in seconds")
+    can_be_deleted: Optional[bool] = Field(None, description="Whether contest can be deleted")
     
     class Config:
         # Ensure datetime fields are serialized with timezone info
@@ -85,7 +91,7 @@ class SubmissionResponse(BaseModel):
     max_possible_score: float
     submitted_at: datetime = Field(description="Submission time in UTC")
     time_taken_seconds: Optional[int]
-    is_auto_submitted: bool
+    is_auto_submitted: bool 
     
     # Additional fields for better frontend handling
     percentage: Optional[float] = Field(None, description="Score percentage")
