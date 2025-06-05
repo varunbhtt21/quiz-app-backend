@@ -1207,18 +1207,36 @@ def delete_contest(
         "can_be_deleted": contest.can_be_deleted()
     }
     
-    # Delete contest problems first
-    contest_problems = session.exec(
-        select(ContestProblem).where(ContestProblem.contest_id == contest_id)
-    ).all()
-    for problem in contest_problems:
-        session.delete(problem)
-    
-    # Delete contest
-    session.delete(contest)
-    session.commit()
-    
-    return ContestResponse(**contest_response_data)
+    try:
+        # First, get all contest problems
+        contest_problems = session.exec(
+            select(ContestProblem).where(ContestProblem.contest_id == contest_id)
+        ).all()
+        
+        # Delete all contest problems one by one
+        for problem in contest_problems:
+            session.delete(problem)
+        
+        # Explicitly commit contest problem deletions first
+        session.commit()
+        
+        # Create a new session for the contest deletion to avoid stale references
+        from app.core.database import get_session
+        with next(get_session()) as new_session:
+            # Get the contest in the new session
+            contest_to_delete = new_session.get(Contest, contest_id)
+            if contest_to_delete:
+                new_session.delete(contest_to_delete)
+                new_session.commit()
+        
+        return ContestResponse(**contest_response_data)
+        
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete contest: {str(e)}"
+        )
 
 
 @router.patch("/{contest_id}/status", response_model=ContestResponse)
