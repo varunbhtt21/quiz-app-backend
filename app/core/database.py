@@ -9,6 +9,7 @@ from app.models.student_course import StudentCourse
 from app.models.mcq_problem import MCQProblem
 from app.models.contest import Contest, ContestProblem
 from app.models.submission import Submission
+from app.models.tag import Tag, MCQTag
 
 def clean_database_url(database_url: str) -> str:
     """Clean the database URL to remove unsupported parameters and use correct driver"""
@@ -40,12 +41,16 @@ def clean_database_url(database_url: str) -> str:
 # Clean the database URL for compatibility
 cleaned_database_url = clean_database_url(settings.database_url)
 
-# Create database engine with basic configuration
+# Create database engine with timezone-aware configuration
 engine = create_engine(
     cleaned_database_url,
     echo=settings.debug,
     pool_pre_ping=True,
-    pool_recycle=3600
+    pool_recycle=3600,
+    # PostgreSQL-specific timezone configuration
+    connect_args={
+        "options": "-c timezone=UTC"  # Force all connections to use UTC
+    }
 )
 
 
@@ -58,12 +63,16 @@ def create_db_and_tables():
     # Clean the URL
     cleaned_url = clean_database_url(table_creation_url)
     
-    # Create a separate engine for table creation
+    # Create a separate engine for table creation with timezone configuration
     table_engine = create_engine(
         cleaned_url,
         echo=settings.debug,
         pool_pre_ping=True,
-        pool_recycle=3600
+        pool_recycle=3600,
+        # PostgreSQL-specific timezone configuration
+        connect_args={
+            "options": "-c timezone=UTC"  # Force all connections to use UTC
+        }
     )
     
     try:

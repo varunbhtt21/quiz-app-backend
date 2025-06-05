@@ -1,6 +1,10 @@
 # Use Python 3.11 slim image for compatibility with current requirements
 FROM python:3.11-slim as base
 
+# Set timezone to UTC for consistent time handling
+ENV TZ=UTC
+RUN ln -snf /usr/share/zoneinfo/UTC /etc/localtime && echo UTC > /etc/timezone
+
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

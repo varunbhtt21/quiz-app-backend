@@ -1,7 +1,8 @@
 from sqlmodel import SQLModel, Field
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
+from sqlalchemy import Column, DateTime
 
 
 class Submission(SQLModel, table=True):
@@ -19,8 +20,11 @@ class Submission(SQLModel, table=True):
     # Per-problem correctness stored as JSON: {problem_id: is_correct}
     problem_scores: str = Field(description="JSON object mapping problem_id to correctness")
     
-    # Timing
-    submitted_at: datetime = Field(default_factory=datetime.utcnow)
+    # Timing - Use timezone-aware datetime with TIMESTAMPTZ
+    submitted_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
     time_taken_seconds: Optional[int] = Field(default=None)  # Time taken to complete
     
     # Metadata

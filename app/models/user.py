@@ -2,7 +2,8 @@ from sqlmodel import SQLModel, Field
 from typing import Optional
 from enum import Enum
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
+from sqlalchemy import Column, DateTime
 
 
 class UserRole(str, Enum):
@@ -40,9 +41,15 @@ class User(SQLModel, table=True):
     role: UserRole
     is_active: bool = Field(default=True)
     
-    # Metadata
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    # Metadata - Use timezone-aware datetime with TIMESTAMPTZ
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
     
     class Config:
         use_enum_values = True 

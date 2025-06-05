@@ -237,7 +237,7 @@ def delete_course(
             # Delete contest problems for this contest
             contest_problems = session.exec(
                 select(ContestProblem).where(ContestProblem.contest_id == contest.id)
-            ).all()
+        ).all()
             for contest_problem in contest_problems:
                 session.delete(contest_problem)
             

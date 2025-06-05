@@ -8,6 +8,7 @@ import uuid
 
 from app.core.database import get_session
 from app.utils.auth import get_current_admin
+from app.utils.time_utils import now_utc  # Use UTC time utilities
 from app.core.security import get_password_hash
 from app.api.auth import generate_random_password
 from app.models.user import User, UserRole, RegistrationStatus
@@ -144,7 +145,7 @@ def update_user(
     for field, value in update_data.items():
         setattr(user, field, value)
     
-    user.updated_at = datetime.utcnow()
+    user.updated_at = now_utc()
     
     session.add(user)
     session.commit()
@@ -306,10 +307,10 @@ def delete_user(
                 session.delete(course)
         
         # 6. Finally delete the user
-        session.delete(user)
-        session.commit()
-        
-        return {"message": "User deleted successfully"}
+            session.delete(user)
+            session.commit()
+            
+            return {"message": "User deleted successfully"}
         
     except Exception as e:
         session.rollback()
@@ -338,7 +339,7 @@ student5@example.com"""
     output.seek(0)
     
     # Generate filename
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = now_utc().strftime("%Y%m%d_%H%M%S")
     filename = f"student_preregistration_template_{timestamp}.csv"
     
     return StreamingResponse(

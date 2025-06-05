@@ -1,8 +1,9 @@
 from sqlmodel import SQLModel, Field
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 import uuid
+from sqlalchemy import Column, DateTime
 
 
 class ContestStatus(str, Enum):
@@ -17,23 +18,38 @@ class Contest(SQLModel, table=True):
     name: str = Field(index=True)
     description: Optional[str] = Field(default=None)
     
-    # Time constraints
-    start_time: datetime
-    end_time: datetime
+    # Time constraints - Use timezone-aware datetime with TIMESTAMPTZ
+    start_time: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+    end_time: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     
-    # Metadata
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    # Metadata - Use timezone-aware datetime with TIMESTAMPTZ
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
     
     def get_status(self) -> ContestStatus:
         """Get current contest status based on time"""
-        # Get current time in local timezone for comparison
-        # Since we're storing local times, we should compare with local time
-        now = datetime.now()  # Local time instead of UTC
+        # Use UTC time for consistent comparison across all timezones
+        now = datetime.now(timezone.utc)
         
-        if now < self.start_time:
+        # Ensure contest times are timezone-aware for comparison
+        start_time = self.start_time
+        end_time = self.end_time
+        
+        # If stored times are naive, assume they are UTC
+        if start_time.tzinfo is None:
+            start_time = start_time.replace(tzinfo=timezone.utc)
+        if end_time.tzinfo is None:
+            end_time = end_time.replace(tzinfo=timezone.utc)
+        
+        if now < start_time:
             return ContestStatus.NOT_STARTED
-        elif now > self.end_time:
+        elif now > end_time:
             return ContestStatus.ENDED
         else:
             return ContestStatus.IN_PROGRESS

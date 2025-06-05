@@ -1,7 +1,8 @@
 from sqlmodel import SQLModel, Field
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
+from sqlalchemy import Column, DateTime
 
 
 class Course(SQLModel, table=True):
@@ -12,6 +13,12 @@ class Course(SQLModel, table=True):
     # Instructor (Admin) who created the course
     instructor_id: str = Field(foreign_key="user.id")
     
-    # Metadata
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow) 
+    # Metadata - Use timezone-aware datetime with TIMESTAMPTZ
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False)
+    ) 

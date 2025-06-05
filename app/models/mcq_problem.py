@@ -1,8 +1,9 @@
 from sqlmodel import SQLModel, Field
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 import json
+from sqlalchemy import Column, DateTime
 
 
 class MCQProblem(SQLModel, table=True):
@@ -28,10 +29,16 @@ class MCQProblem(SQLModel, table=True):
     # Tag status - for tracking MCQs that need tags assigned
     needs_tags: bool = Field(default=False, description="True if MCQ was imported without tags and needs tagging")
     
-    # Metadata
+    # Metadata - Use timezone-aware datetime with TIMESTAMPTZ
     created_by: str = Field(foreign_key="user.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
     
     def get_correct_options(self) -> List[str]:
         """Get correct options as a list"""

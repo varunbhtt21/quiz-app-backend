@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
 from datetime import datetime
 from app.models.contest import ContestStatus
@@ -6,22 +6,22 @@ from app.models.contest import ContestStatus
 
 class ContestProblemCreate(BaseModel):
     problem_id: str  # MCQProblem ID to clone
-    marks: float = 1.0
+    marks: float = Field(gt=0, description="Marks must be positive")
 
 
 class ContestCreate(BaseModel):
-    name: str
-    description: Optional[str] = None
-    start_time: datetime
-    end_time: datetime
-    problems: List[ContestProblemCreate]
+    name: str = Field(min_length=1, max_length=200, description="Contest name")
+    description: Optional[str] = Field(None, max_length=1000, description="Contest description")
+    start_time: datetime = Field(description="Contest start time (timezone-aware)")
+    end_time: datetime = Field(description="Contest end time (timezone-aware)")
+    problems: List[ContestProblemCreate] = Field(min_items=1, description="Contest problems")
 
 
 class ContestUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    start_time: Optional[datetime] = None
-    end_time: Optional[datetime] = None
+    name: Optional[str] = Field(None, min_length=1, max_length=200, description="Contest name")
+    description: Optional[str] = Field(None, max_length=1000, description="Contest description")
+    start_time: Optional[datetime] = Field(None, description="Contest start time (timezone-aware)")
+    end_time: Optional[datetime] = Field(None, description="Contest end time (timezone-aware)")
 
 
 class ContestProblemResponse(BaseModel):
@@ -43,19 +43,38 @@ class ContestResponse(BaseModel):
     course_id: str
     name: str
     description: Optional[str]
-    start_time: datetime
-    end_time: datetime
+    start_time: datetime = Field(description="Contest start time in UTC")
+    end_time: datetime = Field(description="Contest end time in UTC")
     status: ContestStatus
-    created_at: datetime
+    created_at: datetime = Field(description="Contest creation time in UTC")
+    
+    # Additional timezone information for frontend
+    timezone: str = Field(default="UTC", description="Timezone of the timestamps")
+    duration_seconds: Optional[int] = Field(None, description="Contest duration in seconds")
+    
+    class Config:
+        # Ensure datetime fields are serialized with timezone info
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v else None
+        }
 
 
 class ContestDetailResponse(ContestResponse):
     problems: List[ContestProblemResponse]
+    
+    # Additional timing information for active contests
+    time_info: Optional[Dict] = Field(None, description="Real-time timing information")
 
 
 class SubmissionCreate(BaseModel):
-    answers: Dict[str, List[str]]  # {problem_id: [selected_options]}
-    time_taken_seconds: Optional[int] = None
+    answers: Dict[str, List[str]] = Field(
+        description="Problem answers: {problem_id: [selected_options]}"
+    )
+    time_taken_seconds: Optional[int] = Field(
+        None, 
+        ge=0, 
+        description="Time taken to complete the contest in seconds"
+    )
 
 
 class SubmissionResponse(BaseModel):
@@ -64,6 +83,16 @@ class SubmissionResponse(BaseModel):
     student_id: str
     total_score: float
     max_possible_score: float
-    submitted_at: datetime
+    submitted_at: datetime = Field(description="Submission time in UTC")
     time_taken_seconds: Optional[int]
-    is_auto_submitted: bool 
+    is_auto_submitted: bool
+    
+    # Additional fields for better frontend handling
+    percentage: Optional[float] = Field(None, description="Score percentage")
+    timezone: str = Field(default="UTC", description="Timezone of the timestamps")
+    
+    class Config:
+        # Ensure datetime fields are serialized with timezone info
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v else None
+        } 

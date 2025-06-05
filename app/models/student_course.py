@@ -1,7 +1,8 @@
 from sqlmodel import SQLModel, Field
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
+from sqlalchemy import Column, DateTime
 
 
 class StudentCourse(SQLModel, table=True):
@@ -10,8 +11,11 @@ class StudentCourse(SQLModel, table=True):
     student_id: str = Field(foreign_key="user.id")
     course_id: str = Field(foreign_key="course.id")
     
-    # Enrollment metadata
-    enrolled_at: datetime = Field(default_factory=datetime.utcnow)
+    # Enrollment metadata - Use timezone-aware datetime with TIMESTAMPTZ
+    enrolled_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
     is_active: bool = Field(default=True)
     
     class Config:
