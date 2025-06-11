@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Union
 from datetime import datetime
 from app.models.contest import ContestStatus
 
@@ -30,16 +30,21 @@ class ContestStatusUpdate(BaseModel):
 
 class ContestProblemResponse(BaseModel):
     id: str
+    question_type: str = Field(description="Question type: mcq or long_answer")
     title: str
     description: str
-    option_a: str
-    option_b: str
-    option_c: str
-    option_d: str
+    option_a: Optional[str] = None  # Optional for Long Answer questions
+    option_b: Optional[str] = None
+    option_c: Optional[str] = None
+    option_d: Optional[str] = None
     marks: float
     order_index: int
     image_url: Optional[str] = None
-    correct_options: List[str]  # Include for UI to determine single vs multiple choice
+    correct_options: List[str] = []  # Empty for Long Answer questions
+    
+    # Long Answer specific fields
+    max_word_count: Optional[int] = None
+    sample_answer: Optional[str] = None
 
 
 class ContestResponse(BaseModel):
@@ -73,8 +78,8 @@ class ContestDetailResponse(ContestResponse):
 
 
 class SubmissionCreate(BaseModel):
-    answers: Dict[str, List[str]] = Field(
-        description="Problem answers: {problem_id: [selected_options]}"
+    answers: Dict[str, Union[List[str], str]] = Field(
+        description="Problem answers: {problem_id: [selected_options] for MCQ, text_answer for Long Answer}"
     )
     time_taken_seconds: Optional[int] = Field(
         None, 

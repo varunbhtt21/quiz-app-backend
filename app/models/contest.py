@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from enum import Enum
 import uuid
 from sqlalchemy import Column, DateTime
+from .mcq_problem import QuestionType, ScoringType
 
 
 class ContestStatus(str, Enum):
@@ -70,17 +71,31 @@ class ContestProblem(SQLModel, table=True):
     contest_id: str = Field(foreign_key="contest.id")
     
     # Deep copy of the original problem at contest creation time
-    cloned_problem_id: str  # Reference to original MCQProblem
+    cloned_problem_id: str  # Reference to original Problem
+    question_type: QuestionType = Field(description="Type of question: MCQ or Long Answer")
     title: str
     description: str
-    option_a: str
-    option_b: str
-    option_c: str
-    option_d: str
-    correct_options: str  # JSON list
+    
+    # MCQ-specific fields (optional for long_answer questions)
+    option_a: Optional[str] = Field(default=None)
+    option_b: Optional[str] = Field(default=None)
+    option_c: Optional[str] = Field(default=None)
+    option_d: Optional[str] = Field(default=None)
+    correct_options: Optional[str] = Field(default=None, description="JSON list of correct options for MCQ")
+    
+    # Long Answer specific fields
+    max_word_count: Optional[int] = Field(default=None, description="Maximum word count for long answer questions")
+    sample_answer: Optional[str] = Field(default=None, description="Sample answer for long answer questions")
+    scoring_type: ScoringType = Field(default=ScoringType.MANUAL, description="How the long answer should be scored")
+    keywords_for_scoring: Optional[str] = Field(default=None, description="JSON list of keywords for keyword-based scoring")
+    
+    # Common fields
     explanation: Optional[str] = Field(default=None)
-    image_url: Optional[str] = Field(default=None)  # Store image URL from original MCQ
+    image_url: Optional[str] = Field(default=None, description="Image URL for both question types")
     
     # Contest-specific settings
     marks: float = Field(default=1.0)
     order_index: int = Field(default=0)  # Order in the contest 
+    
+    class Config:
+        use_enum_values = True 

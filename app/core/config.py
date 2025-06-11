@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     # ]
 
         # CORS Configuration - store as string, parse as needed
-    cors_origins_str: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8501,http://127.0.0.1:8501"
+    cors_origins_str: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8501,http://127.0.0.1:8501,http://localhost:8080,http://127.0.0.1:8080"
     
     @property
     def cors_origins(self) -> List[str]:

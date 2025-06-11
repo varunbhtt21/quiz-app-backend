@@ -109,8 +109,11 @@ def export_contest_results(
                     row[f"Q{problem.order_index + 1} Max"] = problem.marks
                     row[f"Q{problem.order_index + 1} Student Answer"] = "Error"
                     try:
-                        correct_options = json.loads(problem.correct_options)
-                        row[f"Q{problem.order_index + 1} Correct Answer"] = ", ".join(correct_options)
+                        if problem.correct_options is not None:
+                            correct_options = json.loads(problem.correct_options)
+                            row[f"Q{problem.order_index + 1} Correct Answer"] = ", ".join(correct_options)
+                        else:
+                            row[f"Q{problem.order_index + 1} Correct Answer"] = "Long Answer Question"
                     except (json.JSONDecodeError, TypeError):
                         row[f"Q{problem.order_index + 1} Correct Answer"] = "Error parsing options"
         else:
@@ -130,8 +133,11 @@ def export_contest_results(
                 row[f"Q{problem.order_index + 1} Max"] = problem.marks
                 row[f"Q{problem.order_index + 1} Student Answer"] = "Not Submitted"
                 try:
-                    correct_options = json.loads(problem.correct_options)
-                    row[f"Q{problem.order_index + 1} Correct Answer"] = ", ".join(correct_options)
+                    if problem.correct_options is not None:
+                        correct_options = json.loads(problem.correct_options)
+                        row[f"Q{problem.order_index + 1} Correct Answer"] = ", ".join(correct_options)
+                    else:
+                        row[f"Q{problem.order_index + 1} Correct Answer"] = "Long Answer Question"
                 except (json.JSONDecodeError, TypeError):
                     row[f"Q{problem.order_index + 1} Correct Answer"] = "Error parsing options"
         
@@ -181,8 +187,11 @@ def export_contest_results(
         problem_details = []
         for problem in problems:
             try:
-                correct_options = json.loads(problem.correct_options)
-                correct_options_str = ", ".join(correct_options)
+                if problem.correct_options is not None:
+                    correct_options = json.loads(problem.correct_options)
+                    correct_options_str = ", ".join(correct_options)
+                else:
+                    correct_options_str = "Long Answer Question"
             except (json.JSONDecodeError, TypeError):
                 correct_options_str = "Error parsing options"
                 
@@ -190,10 +199,10 @@ def export_contest_results(
                 "Question Number": f"Q{problem.order_index + 1}",
                 "Title": problem.title,
                 "Description": problem.description[:100] + "..." if len(problem.description) > 100 else problem.description,
-                "Option A": problem.option_a,
-                "Option B": problem.option_b,
-                "Option C": problem.option_c,
-                "Option D": problem.option_d,
+                "Option A": problem.option_a or "N/A",
+                "Option B": problem.option_b or "N/A",
+                "Option C": problem.option_c or "N/A",
+                "Option D": problem.option_d or "N/A",
                 "Correct Options": correct_options_str,
                 "Marks": problem.marks
             })
@@ -306,8 +315,11 @@ def export_contest_results_csv(
                     row[f"Q{problem.order_index + 1} Max"] = problem.marks
                     row[f"Q{problem.order_index + 1} Student Answer"] = "Error"
                     try:
-                        correct_options = json.loads(problem.correct_options)
-                        row[f"Q{problem.order_index + 1} Correct Answer"] = ", ".join(correct_options)
+                        if problem.correct_options is not None:
+                            correct_options = json.loads(problem.correct_options)
+                            row[f"Q{problem.order_index + 1} Correct Answer"] = ", ".join(correct_options)
+                        else:
+                            row[f"Q{problem.order_index + 1} Correct Answer"] = "Long Answer Question"
                     except (json.JSONDecodeError, TypeError):
                         row[f"Q{problem.order_index + 1} Correct Answer"] = "Error parsing options"
         else:
@@ -327,8 +339,11 @@ def export_contest_results_csv(
                 row[f"Q{problem.order_index + 1} Max"] = problem.marks
                 row[f"Q{problem.order_index + 1} Student Answer"] = "Not Submitted"
                 try:
-                    correct_options = json.loads(problem.correct_options)
-                    row[f"Q{problem.order_index + 1} Correct Answer"] = ", ".join(correct_options)
+                    if problem.correct_options is not None:
+                        correct_options = json.loads(problem.correct_options)
+                        row[f"Q{problem.order_index + 1} Correct Answer"] = ", ".join(correct_options)
+                    else:
+                        row[f"Q{problem.order_index + 1} Correct Answer"] = "Long Answer Question"
                 except (json.JSONDecodeError, TypeError):
                     row[f"Q{problem.order_index + 1} Correct Answer"] = "Error parsing options"
         

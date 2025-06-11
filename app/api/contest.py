@@ -218,6 +218,7 @@ def create_contest(
         contest_problem = ContestProblem(
             contest_id=contest.id,
             cloned_problem_id=mcq_problem.id,
+            question_type=mcq_problem.question_type,
             title=mcq_problem.title,
             description=mcq_problem.description,
             option_a=mcq_problem.option_a,
@@ -225,6 +226,10 @@ def create_contest(
             option_c=mcq_problem.option_c,
             option_d=mcq_problem.option_d,
             correct_options=mcq_problem.correct_options,
+            max_word_count=mcq_problem.max_word_count,
+            sample_answer=mcq_problem.sample_answer,
+            scoring_type=mcq_problem.scoring_type,
+            keywords_for_scoring=mcq_problem.keywords_for_scoring,
             explanation=mcq_problem.explanation,
             image_url=mcq_problem.image_url,
             marks=problem_data.marks,
@@ -381,10 +386,19 @@ def get_contest(
     problem_responses = []
     for problem in problems:
         # Parse correct options for UI to determine single vs multiple choice
-        correct_options = json.loads(problem.correct_options)
+        # Handle None values for Long Answer questions
+        if problem.correct_options is not None:
+            try:
+                correct_options = json.loads(problem.correct_options)
+            except (json.JSONDecodeError, TypeError):
+                correct_options = []
+        else:
+            # Long Answer questions don't have correct_options
+            correct_options = []
         
         problem_response = ContestProblemResponse(
             id=problem.id,
+            question_type=problem.question_type.value,
             title=problem.title,
             description=problem.description,
             option_a=problem.option_a,
@@ -394,7 +408,9 @@ def get_contest(
             marks=problem.marks,
             order_index=problem.order_index,
             image_url=problem.image_url,
-            correct_options=correct_options
+            correct_options=correct_options,
+            max_word_count=problem.max_word_count,
+            sample_answer=problem.sample_answer
         )
         problem_responses.append(problem_response)
     
@@ -704,43 +720,65 @@ def submit_contest(
         if student_answer:  # Count non-empty answers
             answered_problems += 1
         
-        try:
-            correct_options = json.loads(problem.correct_options)
-        except (json.JSONDecodeError, TypeError):
-            # Handle malformed JSON in correct_options
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Problem {problem.id} has malformed correct options"
-            )
-        
-        # Validate student answer format
-        if not isinstance(student_answer, list):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Answer for problem {problem.id} must be a list of options"
-            )
-        
-        # Validate answer options are valid (A, B, C, D)
-        valid_options = {"A", "B", "C", "D"}
-        invalid_options = set(student_answer) - valid_options
-        if invalid_options:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid answer options for problem {problem.id}: {list(invalid_options)}"
-            )
-        
-        # Score using exact set matching
-        if set(student_answer) == set(correct_options):
-            score = problem.marks
-            total_score += score
+        # Handle different question types for scoring
+        if problem.question_type.value == "mcq":
+            # MCQ scoring logic
+            try:
+                correct_options = json.loads(problem.correct_options) if problem.correct_options else []
+            except (json.JSONDecodeError, TypeError):
+                # Handle malformed JSON in correct_options
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Problem {problem.id} has malformed correct options"
+                )
+            
+            # Validate student answer format for MCQ
+            if not isinstance(student_answer, list):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Answer for MCQ problem {problem.id} must be a list of options"
+                )
+            
+            # Validate answer options are valid (A, B, C, D)
+            valid_options = {"A", "B", "C", "D"}
+            invalid_options = set(student_answer) - valid_options
+            if invalid_options:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid answer options for problem {problem.id}: {list(invalid_options)}"
+                )
+            
+            # Score using exact set matching for MCQ
+            if set(student_answer) == set(correct_options):
+                score = problem.marks
+                total_score += score
+            else:
+                score = 0.0
+                
+            correct_options_for_response = correct_options
+            
         else:
+            # Long Answer scoring logic
+            # For now, Long Answer questions need manual scoring
+            # So we set score to 0 and mark for manual review
             score = 0.0
+            correct_options_for_response = []
+            
+            # Validate student answer format for Long Answer
+            if not isinstance(student_answer, str):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Answer for Long Answer problem {problem.id} must be a string"
+                )
+            
+            # Mark submission for manual review if it contains long answers
+            # (This will be handled after the loop)
         
         problem_scores[problem.id] = {
             "score": score,
             "max_score": problem.marks,
             "student_answer": student_answer,
-            "correct_answer": correct_options
+            "correct_answer": correct_options_for_response
         }
     
     # Log submission statistics for potential analysis
@@ -952,7 +990,15 @@ def get_my_submission_details(
     # Build detailed response
     detailed_problems = []
     for problem in problems:
-        correct_options = json.loads(problem.correct_options)
+        # Handle None values for Long Answer questions
+        if problem.correct_options is not None:
+            try:
+                correct_options = json.loads(problem.correct_options)
+            except (json.JSONDecodeError, TypeError):
+                correct_options = []
+        else:
+            correct_options = []
+        
         student_answer = student_answers.get(problem.id, [])
         score_data = problem_scores.get(problem.id, {})
         
@@ -1093,31 +1139,45 @@ def auto_submit_contest(
         # Get student's answer for this problem (empty if not answered)
         student_answer = answers.get(problem.id, [])
         
-        try:
-            correct_options = json.loads(problem.correct_options)
-        except (json.JSONDecodeError, TypeError):
-            correct_options = []
-        
-        # Validate answer format (skip invalid answers for auto-submission)
-        if not isinstance(student_answer, list):
-            student_answer = []
-        
-        # Filter out invalid options
-        valid_options = {"A", "B", "C", "D"}
-        student_answer = [opt for opt in student_answer if opt in valid_options]
-        
-        # Score using exact set matching
-        if set(student_answer) == set(correct_options):
-            score = problem.marks
-            total_score += score
+        # Handle different question types for auto-submission
+        if problem.question_type.value == "mcq":
+            # MCQ auto-scoring logic
+            try:
+                correct_options = json.loads(problem.correct_options) if problem.correct_options else []
+            except (json.JSONDecodeError, TypeError):
+                correct_options = []
+            
+            # Validate answer format (skip invalid answers for auto-submission)
+            if not isinstance(student_answer, list):
+                student_answer = []
+            
+            # Filter out invalid options
+            valid_options = {"A", "B", "C", "D"}
+            student_answer = [opt for opt in student_answer if opt in valid_options]
+            
+            # Score using exact set matching
+            if set(student_answer) == set(correct_options):
+                score = problem.marks
+                total_score += score
+            else:
+                score = 0.0
+                
+            correct_options_for_response = correct_options
+            
         else:
+            # Long Answer auto-submission - no scoring, just preserve answer
             score = 0.0
+            correct_options_for_response = []
+            
+            # For Long Answer, student_answer should be a string
+            if not isinstance(student_answer, str):
+                student_answer = ""
         
         problem_scores[problem.id] = {
             "score": score,
             "max_score": problem.marks,
             "student_answer": student_answer,
-            "correct_answer": correct_options
+            "correct_answer": correct_options_for_response
         }
     
     # Create auto-submission with timezone-aware timestamp

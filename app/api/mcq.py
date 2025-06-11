@@ -7,7 +7,7 @@ from io import BytesIO
 import json
 
 from app.core.database import get_session
-from app.models.mcq_problem import MCQProblem
+from app.models.mcq_problem import MCQProblem, QuestionType, ScoringType
 from app.models.tag import Tag, MCQTag
 from app.models.user import User
 from app.schemas.mcq import (
@@ -20,36 +20,56 @@ from app.schemas.mcq import (
 )
 from app.utils.auth import get_current_admin
 
-router = APIRouter(prefix="/mcq", tags=["MCQ Problems"])
+router = APIRouter(prefix="/mcq", tags=["Questions"])
 
 
 @router.post("/", response_model=MCQProblemResponse)
-def create_mcq_problem(
+def create_question(
     problem_data: MCQProblemCreate,
     current_admin: User = Depends(get_current_admin),
     session: Session = Depends(get_session)
 ):
-    """Create a new MCQ problem with optional tags"""
-    # Validate correct options
-    valid_options = ["A", "B", "C", "D"]
-    for option in problem_data.correct_options:
-        if option not in valid_options:
+    """Create a new question (MCQ or Long Answer) with optional tags"""
+    
+    # Validate based on question type
+    if problem_data.question_type == QuestionType.MCQ:
+        # Validate MCQ fields
+        if not all([problem_data.option_a, problem_data.option_b, 
+                   problem_data.option_c, problem_data.option_d, 
+                   problem_data.correct_options]):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid option: {option}. Must be one of {valid_options}"
+                detail="All options and correct answers are required for MCQ questions"
+            )
+        
+        # Validate correct options for MCQ
+        valid_options = ["A", "B", "C", "D"]
+        for option in problem_data.correct_options:
+            if option not in valid_options:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid option: {option}. Must be one of {valid_options}"
+                )
+        
+        if not problem_data.correct_options:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="At least one correct option must be specified for MCQ questions"
             )
     
-    if not problem_data.correct_options:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="At least one correct option must be specified"
-        )
+    elif problem_data.question_type == QuestionType.LONG_ANSWER:
+        # Validate Long Answer fields
+        if problem_data.max_word_count is not None and problem_data.max_word_count <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Max word count must be positive"
+            )
     
     # Check if tags are provided for manual creation (UI requires tags)
     if not problem_data.tag_ids:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="At least one tag is required for manual MCQ creation"
+            detail="At least one tag is required for manual question creation"
         )
     
     # Validate tags exist
@@ -66,34 +86,45 @@ def create_mcq_problem(
         )
     
     try:
-        # Create MCQ problem
-        mcq_problem = MCQProblem(
+        # Create question
+        question = MCQProblem(
             title=problem_data.title,
             description=problem_data.description,
-            option_a=problem_data.option_a,
-            option_b=problem_data.option_b,
-            option_c=problem_data.option_c,
-            option_d=problem_data.option_d,
-            correct_options=json.dumps(problem_data.correct_options),
+            question_type=problem_data.question_type,
             explanation=problem_data.explanation,
             created_by=current_admin.id,
             needs_tags=False  # Manual creation always has tags
         )
         
-        session.add(mcq_problem)
+        # Set type-specific fields
+        if problem_data.question_type == QuestionType.MCQ:
+            question.option_a = problem_data.option_a
+            question.option_b = problem_data.option_b
+            question.option_c = problem_data.option_c
+            question.option_d = problem_data.option_d
+            question.correct_options = json.dumps(problem_data.correct_options)
+        
+        elif problem_data.question_type == QuestionType.LONG_ANSWER:
+            question.max_word_count = problem_data.max_word_count
+            question.sample_answer = problem_data.sample_answer
+            question.scoring_type = problem_data.scoring_type or ScoringType.MANUAL
+            if problem_data.keywords_for_scoring:
+                question.keywords_for_scoring = json.dumps(problem_data.keywords_for_scoring)
+        
+        session.add(question)
         session.flush()  # Get the ID
         
         # Create tag relationships
         for tag_id in problem_data.tag_ids:
             mcq_tag = MCQTag(
-                mcq_id=mcq_problem.id,
+                mcq_id=question.id,
                 tag_id=tag_id,
                 added_by=current_admin.id
             )
             session.add(mcq_tag)
         
         session.commit()
-        session.refresh(mcq_problem)
+        session.refresh(question)
         
         # Get tags for response
         tag_info = [
@@ -102,33 +133,38 @@ def create_mcq_problem(
         ]
         
         return MCQProblemResponse(
-            id=mcq_problem.id,
-            title=mcq_problem.title,
-            description=mcq_problem.description,
-            option_a=mcq_problem.option_a,
-            option_b=mcq_problem.option_b,
-            option_c=mcq_problem.option_c,
-            option_d=mcq_problem.option_d,
-            correct_options=mcq_problem.get_correct_options(),
-            explanation=mcq_problem.explanation,
-            image_url=mcq_problem.image_url,
-            created_by=mcq_problem.created_by,
-            created_at=mcq_problem.created_at,
-            updated_at=mcq_problem.updated_at,
+            id=question.id,
+            title=question.title,
+            description=question.description,
+            question_type=question.question_type,
+            option_a=question.option_a,
+            option_b=question.option_b,
+            option_c=question.option_c,
+            option_d=question.option_d,
+            correct_options=question.get_correct_options() if question.question_type == QuestionType.MCQ else None,
+            max_word_count=question.max_word_count,
+            sample_answer=question.sample_answer,
+            scoring_type=question.scoring_type,
+            keywords_for_scoring=question.get_scoring_keywords() if question.question_type == QuestionType.LONG_ANSWER else None,
+            explanation=question.explanation,
+            image_url=question.image_url,
+            created_by=question.created_by,
+            created_at=question.created_at,
+            updated_at=question.updated_at,
             tags=tag_info,
-            needs_tags=mcq_problem.needs_tags
+            needs_tags=question.needs_tags
         )
     
     except Exception as e:
         session.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create MCQ problem: {str(e)}"
+            detail=f"Failed to create question: {str(e)}"
         )
 
 
 @router.get("/", response_model=List[MCQProblemResponse])
-def list_mcq_problems(
+def list_questions(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     search: Optional[str] = Query(None, description="Search by title or description"),
@@ -136,10 +172,11 @@ def list_mcq_problems(
     tag_names: Optional[str] = Query(None, description="Comma-separated tag names to filter by"),
     created_by: Optional[str] = Query(None, description="Filter by creator"),
     needs_tags: Optional[bool] = Query(None, description="Filter by questions that need tags"),
+    question_type: Optional[QuestionType] = Query(None, description="Filter by question type"),
     current_admin: User = Depends(get_current_admin),
     session: Session = Depends(get_session)
 ):
-    """List MCQ problems with advanced filtering by tags and tag status"""
+    """List questions with advanced filtering by tags, type, and tag status"""
     statement = select(MCQProblem).distinct()
     
     if search:
@@ -153,6 +190,9 @@ def list_mcq_problems(
     
     if needs_tags is not None:
         statement = statement.where(MCQProblem.needs_tags == needs_tags)
+    
+    if question_type is not None:
+        statement = statement.where(MCQProblem.question_type == question_type)
     
     # Handle tag filtering
     if tag_ids:
@@ -185,11 +225,16 @@ def list_mcq_problems(
             id=problem.id,
             title=problem.title,
             description=problem.description,
+            question_type=problem.question_type,
             option_a=problem.option_a,
             option_b=problem.option_b,
             option_c=problem.option_c,
             option_d=problem.option_d,
-            correct_options=problem.get_correct_options(),
+            correct_options=problem.get_correct_options() if problem.question_type == QuestionType.MCQ else None,
+            max_word_count=problem.max_word_count,
+            sample_answer=problem.sample_answer,
+            scoring_type=problem.scoring_type,
+            keywords_for_scoring=problem.get_scoring_keywords() if problem.question_type == QuestionType.LONG_ANSWER else None,
             explanation=problem.explanation,
             image_url=problem.image_url,
             created_by=problem.created_by,
@@ -203,15 +248,16 @@ def list_mcq_problems(
 
 
 @router.get("/list", response_model=List[MCQProblemListResponse])
-def list_mcq_problems_simplified(
+def list_questions_simplified(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     search: Optional[str] = Query(None),
     tag_ids: Optional[str] = Query(None, description="Comma-separated tag IDs"),
+    question_type: Optional[QuestionType] = Query(None, description="Filter by question type"),
     current_admin: User = Depends(get_current_admin),
     session: Session = Depends(get_session)
 ):
-    """Simplified list of MCQ problems for UI lists"""
+    """Simplified list of questions for UI lists"""
     statement = select(MCQProblem).distinct()
     
     if search:
@@ -219,6 +265,9 @@ def list_mcq_problems_simplified(
             MCQProblem.title.ilike(f"%{search}%") | 
             MCQProblem.description.ilike(f"%{search}%")
         )
+    
+    if question_type is not None:
+        statement = statement.where(MCQProblem.question_type == question_type)
     
     if tag_ids:
         tag_id_list = [tag_id.strip() for tag_id in tag_ids.split(",") if tag_id.strip()]
@@ -245,6 +294,7 @@ def list_mcq_problems_simplified(
             id=problem.id,
             title=problem.title,
             description=problem.description,
+            question_type=problem.question_type,
             image_url=problem.image_url,
             created_at=problem.created_at,
             tags=tag_info,
@@ -282,11 +332,16 @@ def get_mcq_problem(
         id=problem.id,
         title=problem.title,
         description=problem.description,
+        question_type=problem.question_type,
         option_a=problem.option_a,
         option_b=problem.option_b,
         option_c=problem.option_c,
         option_d=problem.option_d,
-        correct_options=problem.get_correct_options(),
+        correct_options=problem.get_correct_options() if problem.question_type == QuestionType.MCQ else None,
+        max_word_count=problem.max_word_count,
+        sample_answer=problem.sample_answer,
+        scoring_type=problem.scoring_type,
+        keywords_for_scoring=problem.get_scoring_keywords() if problem.question_type == QuestionType.LONG_ANSWER else None,
         explanation=problem.explanation,
         image_url=problem.image_url,
         created_by=problem.created_by,
@@ -401,11 +456,16 @@ def update_mcq_problem(
             id=problem.id,
             title=problem.title,
             description=problem.description,
+            question_type=problem.question_type,
             option_a=problem.option_a,
             option_b=problem.option_b,
             option_c=problem.option_c,
             option_d=problem.option_d,
-            correct_options=problem.get_correct_options(),
+            correct_options=problem.get_correct_options() if problem.question_type == QuestionType.MCQ else None,
+            max_word_count=problem.max_word_count,
+            sample_answer=problem.sample_answer,
+            scoring_type=problem.scoring_type,
+            keywords_for_scoring=problem.get_scoring_keywords() if problem.question_type == QuestionType.LONG_ANSWER else None,
             explanation=problem.explanation,
             image_url=problem.image_url,
             created_by=problem.created_by,
