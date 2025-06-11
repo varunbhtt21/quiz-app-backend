@@ -42,7 +42,8 @@ def create_course(
         description=course.description,
         instructor_id=course.instructor_id,
         created_at=course.created_at,
-        updated_at=course.updated_at
+        updated_at=course.updated_at,
+        enrollment_count=0  # New course has no enrollments yet
     )
 
 
@@ -76,17 +77,28 @@ def list_courses(
     statement = statement.offset(skip).limit(limit).order_by(Course.created_at.desc())
     courses = session.exec(statement).all()
     
-    return [
-        CourseResponse(
+    # Calculate enrollment counts for each course
+    course_responses = []
+    for course in courses:
+        # Count active enrollments for this course
+        enrollment_count = len(session.exec(
+            select(StudentCourse).where(
+                StudentCourse.course_id == course.id,
+                StudentCourse.is_active == True
+            )
+        ).all())
+        
+        course_responses.append(CourseResponse(
             id=course.id,
             name=course.name,
             description=course.description,
             instructor_id=course.instructor_id,
             created_at=course.created_at,
-            updated_at=course.updated_at
-        )
-        for course in courses
-    ]
+            updated_at=course.updated_at,
+            enrollment_count=enrollment_count
+        ))
+    
+    return course_responses
 
 
 @router.get("/{course_id}", response_model=CourseResponse)
@@ -133,7 +145,13 @@ def get_course(
         description=course.description,
         instructor_id=course.instructor_id,
         created_at=course.created_at,
-        updated_at=course.updated_at
+        updated_at=course.updated_at,
+        enrollment_count=len(session.exec(
+            select(StudentCourse).where(
+                StudentCourse.course_id == course.id,
+                StudentCourse.is_active == True
+            )
+        ).all())
     )
 
 
@@ -176,7 +194,13 @@ def update_course(
         description=course.description,
         instructor_id=course.instructor_id,
         created_at=course.created_at,
-        updated_at=course.updated_at
+        updated_at=course.updated_at,
+        enrollment_count=len(session.exec(
+            select(StudentCourse).where(
+                StudentCourse.course_id == course.id,
+                StudentCourse.is_active == True
+            )
+        ).all())
     )
 
 

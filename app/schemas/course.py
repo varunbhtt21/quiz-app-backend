@@ -20,6 +20,7 @@ class CourseResponse(BaseModel):
     instructor_id: str
     created_at: datetime
     updated_at: datetime
+    enrollment_count: int = 0  # Number of active students enrolled
 
 
 class StudentEnrollment(BaseModel):

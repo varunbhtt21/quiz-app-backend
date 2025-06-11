@@ -263,6 +263,52 @@ def create_contest(
     )
 
 
+@router.get("/my-submissions", response_model=List[SubmissionResponse])
+def get_my_all_submissions(
+    current_student: User = Depends(get_current_student),
+    session: Session = Depends(get_session)
+):
+    """Get all submissions for the current student across all contests they have access to"""
+    # Get all course IDs the student is enrolled in
+    enrolled_courses = session.exec(
+        select(StudentCourse.course_id).where(
+            StudentCourse.student_id == current_student.id,
+            StudentCourse.is_active == True
+        )
+    ).all()
+    
+    if not enrolled_courses:
+        return []
+    
+    # Get all submissions for this student across their enrolled courses
+    submissions = session.exec(
+        select(Submission, Contest).join(Contest).where(
+            Submission.student_id == current_student.id,
+            Contest.course_id.in_(enrolled_courses)
+        )
+    ).all()
+    
+    submission_responses = []
+    for submission, contest in submissions:
+        # Calculate percentage for response
+        percentage = (submission.total_score / submission.max_possible_score * 100) if submission.max_possible_score > 0 else 0
+        
+        submission_responses.append(SubmissionResponse(
+            id=submission.id,
+            contest_id=submission.contest_id,
+            student_id=submission.student_id,
+            total_score=submission.total_score,
+            max_possible_score=submission.max_possible_score,
+            submitted_at=submission.submitted_at,
+            time_taken_seconds=submission.time_taken_seconds,
+            is_auto_submitted=submission.is_auto_submitted,
+            percentage=round(percentage, 2),
+            timezone="UTC"
+        ))
+    
+    return submission_responses
+
+
 @router.get("/", response_model=List[ContestResponse])
 def list_contests(
     course_id: Optional[str] = Query(None, description="Filter by course ID"),
