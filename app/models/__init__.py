@@ -1,4 +1,4 @@
-from .user import User, UserRole
+from .user import User, UserRole, VerificationMethod
 from .course import Course
 from .student_course import StudentCourse
 from .mcq_problem import MCQProblem, QuestionType, ScoringType
@@ -9,6 +9,7 @@ from .tag import Tag, MCQTag
 __all__ = [
     "User",
     "UserRole", 
+    "VerificationMethod", 
     "Course",
     "StudentCourse",
     "MCQProblem",

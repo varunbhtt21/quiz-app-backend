@@ -1,20 +1,457 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select
-from typing import List
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 from io import BytesIO
 import uuid
+import asyncio
+import json
 
 from app.core.database import get_session
 from app.utils.auth import get_current_admin
 from app.utils.time_utils import now_utc  # Use UTC time utilities
 from app.core.security import get_password_hash
 from app.api.auth import generate_random_password
-from app.models.user import User, UserRole, RegistrationStatus
-from app.schemas.student import StudentCreate, StudentResponse, StudentUpdate
+from app.models.user import User, UserRole, RegistrationStatus, VerificationMethod
+from app.schemas.student import (
+    StudentCreate, StudentResponse, StudentUpdate,
+    BulkImportWithEmailRequest, SendInvitationsRequest, BulkEmailRequest,
+    EmailStatusResponse, StudentWithEmailStatus, EmailStatusUpdateRequest
+)
+from app.services.email_service import email_service
 
 router = APIRouter()
+
+# In-memory progress tracking for email operations
+email_operation_progress = {}
+
+
+# Helper Functions
+
+def generate_operation_id() -> str:
+    """Generate unique operation ID for tracking"""
+    return f"email_op_{uuid.uuid4().hex[:8]}_{int(now_utc().timestamp())}"
+
+
+def update_progress(operation_id: str, **kwargs):
+    """Update progress for an email operation"""
+    if operation_id in email_operation_progress:
+        email_operation_progress[operation_id].update(kwargs)
+        # Calculate progress percentage
+        total = email_operation_progress[operation_id].get('total_emails', 0)
+        sent = email_operation_progress[operation_id].get('sent_count', 0)
+        failed = email_operation_progress[operation_id].get('failed_count', 0)
+        if total > 0:
+            email_operation_progress[operation_id]['progress_percentage'] = ((sent + failed) / total) * 100
+
+
+async def send_bulk_emails_background(
+    operation_id: str,
+    students: List[Dict[str, Any]],
+    course_name: Optional[str] = None,
+    delay_seconds: int = 1
+):
+    """Background task for sending bulk emails"""
+    try:
+        update_progress(operation_id, status="in_progress")
+        
+        for i, student in enumerate(students):
+            try:
+                success = await email_service.send_invitation_email(
+                    to_email=student['email'],
+                    student_name=student.get('name', 'Student'),
+                    course_name=course_name
+                )
+                
+                if success:
+                    current_sent = email_operation_progress[operation_id].get('sent_count', 0)
+                    update_progress(operation_id, sent_count=current_sent + 1)
+                else:
+                    current_failed = email_operation_progress[operation_id].get('failed_count', 0)
+                    errors = email_operation_progress[operation_id].get('errors', [])
+                    errors.append(f"Failed to send email to {student['email']}")
+                    update_progress(operation_id, failed_count=current_failed + 1, errors=errors)
+                
+                # Delay between emails to avoid rate limiting
+                if i < len(students) - 1:  # Don't delay after the last email
+                    await asyncio.sleep(delay_seconds)
+                    
+            except Exception as e:
+                current_failed = email_operation_progress[operation_id].get('failed_count', 0)
+                errors = email_operation_progress[operation_id].get('errors', [])
+                errors.append(f"Error sending to {student['email']}: {str(e)}")
+                update_progress(operation_id, failed_count=current_failed + 1, errors=errors)
+        
+        update_progress(
+            operation_id, 
+            status="completed", 
+            completed_at=now_utc()
+        )
+        
+    except Exception as e:
+        errors = email_operation_progress[operation_id].get('errors', [])
+        errors.append(f"Background task error: {str(e)}")
+        update_progress(
+            operation_id, 
+            status="failed", 
+            completed_at=now_utc(),
+            errors=errors
+        )
+
+
+# Extended Email Management Endpoints
+
+@router.get("/email-status", response_model=List[StudentWithEmailStatus])
+def get_students_with_email_status(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+    search: str = Query(None),
+    email_status: str = Query(None, description="Filter by email status: sent, not_sent, verified, not_verified"),
+    current_admin: User = Depends(get_current_admin),
+    session: Session = Depends(get_session)
+):
+    """Get students with email status information"""
+    statement = select(User).where(User.role == UserRole.STUDENT)
+    
+    # Apply search filter
+    if search:
+        statement = statement.where(User.email.contains(search))
+    
+    # Apply email status filter
+    if email_status:
+        if email_status == "sent":
+            statement = statement.where(User.email_sent == True)
+        elif email_status == "not_sent":
+            statement = statement.where(User.email_sent == False)
+        elif email_status == "verified":
+            statement = statement.where(User.email_verified == True)
+        elif email_status == "not_verified":
+            statement = statement.where(User.email_verified == False)
+    
+    statement = statement.offset(skip).limit(limit)
+    students = session.exec(statement).all()
+    
+    return [
+        StudentWithEmailStatus(
+            id=student.id,
+            email=student.email,
+            name=student.name,
+            role=student.role,
+            is_active=student.is_active,
+            registration_status=student.registration_status,
+            email_sent=student.email_sent,
+            email_verified=student.email_verified,
+            invitation_sent_at=student.invitation_sent_at,
+            verification_method=student.verification_method,
+            created_at=student.created_at,
+            updated_at=student.updated_at
+        )
+        for student in students
+    ]
+
+
+@router.get("/email-operation/{operation_id}", response_model=EmailStatusResponse)
+def get_email_operation_status(
+    operation_id: str,
+    current_admin: User = Depends(get_current_admin)
+):
+    """Get status of an email operation"""
+    if operation_id not in email_operation_progress:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Email operation not found"
+        )
+    
+    operation_data = email_operation_progress[operation_id]
+    
+    return EmailStatusResponse(
+        operation_id=operation_id,
+        status=operation_data.get('status', 'unknown'),
+        total_emails=operation_data.get('total_emails', 0),
+        sent_count=operation_data.get('sent_count', 0),
+        failed_count=operation_data.get('failed_count', 0),
+        progress_percentage=operation_data.get('progress_percentage', 0.0),
+        errors=operation_data.get('errors', []),
+        started_at=operation_data.get('started_at'),
+        completed_at=operation_data.get('completed_at')
+    )
+
+
+@router.post("/bulk-import-with-email")
+def bulk_import_students_with_email(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    send_emails: bool = Query(True, description="Whether to send invitation emails"),
+    course_id: str = Query(None, description="Course ID for email context"),
+    email_delay_seconds: int = Query(1, ge=0, le=10, description="Delay between emails in seconds"),
+    current_admin: User = Depends(get_current_admin),
+    session: Session = Depends(get_session)
+):
+    """Enhanced bulk import with automatic email invitation sending"""
+    
+    # First, perform the regular bulk import
+    regular_import_result = bulk_import_students(file, current_admin, session)
+    
+    # If import was successful and emails should be sent
+    if send_emails and regular_import_result['successful'] > 0:
+        # Validate email service is configured
+        if not email_service.is_configured:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Email service not configured. Import completed but emails not sent."
+            )
+        
+        # Get course information for email context
+        course_name = None
+        if course_id:
+            from app.models.course import Course
+            course = session.get(Course, course_id)
+            if course and course.instructor_id == current_admin.id:
+                course_name = course.name
+        
+        # Generate operation ID for tracking
+        operation_id = generate_operation_id()
+        
+        # Initialize progress tracking
+        students_for_email = [
+            {
+                'email': student['email'],
+                'name': student.get('name', 'Student')
+            }
+            for student in regular_import_result['preregistered_students']
+        ]
+        
+        email_operation_progress[operation_id] = {
+            'status': 'pending',
+            'total_emails': len(students_for_email),
+            'sent_count': 0,
+            'failed_count': 0,
+            'progress_percentage': 0.0,
+            'errors': [],
+            'started_at': now_utc(),
+            'completed_at': None
+        }
+        
+        # Start background email sending
+        background_tasks.add_task(
+            send_bulk_emails_background,
+            operation_id,
+            students_for_email,
+            course_name,
+            email_delay_seconds
+        )
+        
+        # Update import result with email operation info
+        regular_import_result['email_operation'] = {
+            'operation_id': operation_id,
+            'emails_to_send': len(students_for_email),
+            'course_name': course_name
+        }
+    
+    return regular_import_result
+
+
+@router.post("/send-invitations")
+def send_invitation_emails(
+    request: SendInvitationsRequest,
+    background_tasks: BackgroundTasks,
+    current_admin: User = Depends(get_current_admin),
+    session: Session = Depends(get_session)
+):
+    """Send invitation emails to selected students"""
+    
+    # Validate email service
+    if not email_service.is_configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Email service not configured"
+        )
+    
+    # Get students
+    students = session.exec(
+        select(User).where(
+            User.id.in_(request.student_ids),
+            User.role == UserRole.STUDENT
+        )
+    ).all()
+    
+    if not students:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No students found with provided IDs"
+        )
+    
+    # Filter students who can receive emails
+    eligible_students = []
+    for student in students:
+        if student.can_send_invitation_email():
+            eligible_students.append({
+                'email': student.email,
+                'name': student.name or 'Student',
+                'user_id': student.id
+            })
+    
+    if not eligible_students:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No students are eligible to receive invitation emails"
+        )
+    
+    # Get course information
+    course_name = None
+    if request.course_id:
+        from app.models.course import Course
+        course = session.get(Course, request.course_id)
+        if course and course.instructor_id == current_admin.id:
+            course_name = course.name
+    
+    # Generate operation ID and initialize progress
+    operation_id = generate_operation_id()
+    
+    email_operation_progress[operation_id] = {
+        'status': 'pending',
+        'total_emails': len(eligible_students),
+        'sent_count': 0,
+        'failed_count': 0,
+        'progress_percentage': 0.0,
+        'errors': [],
+        'started_at': now_utc(),
+        'completed_at': None
+    }
+    
+    # Start background email sending
+    background_tasks.add_task(
+        send_bulk_emails_background,
+        operation_id,
+        eligible_students,
+        course_name,
+        1  # 1 second delay between emails
+    )
+    
+    return {
+        'operation_id': operation_id,
+        'total_students': len(request.student_ids),
+        'eligible_for_email': len(eligible_students),
+        'course_name': course_name,
+        'message': f'Invitation emails are being sent to {len(eligible_students)} students'
+    }
+
+
+@router.post("/bulk-email")
+def send_bulk_custom_email(
+    request: BulkEmailRequest,
+    background_tasks: BackgroundTasks,
+    current_admin: User = Depends(get_current_admin),
+    session: Session = Depends(get_session)
+):
+    """Send custom bulk emails to specified email addresses"""
+    
+    # Validate email service
+    if not email_service.is_configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Email service not configured"
+        )
+    
+    if len(request.student_emails) > 100:  # Rate limiting
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot send more than 100 emails at once"
+        )
+    
+    # Get course information
+    course_name = None
+    if request.course_id:
+        from app.models.course import Course
+        course = session.get(Course, request.course_id)
+        if course and course.instructor_id == current_admin.id:
+            course_name = course.name
+    
+    # Prepare student data for bulk email
+    students_for_email = []
+    for email in request.student_emails:
+        # Try to get student name from database
+        student = session.exec(select(User).where(User.email == email)).first()
+        students_for_email.append({
+            'email': email,
+            'name': student.name if student else 'Student'
+        })
+    
+    # Generate operation ID and initialize progress
+    operation_id = generate_operation_id()
+    
+    email_operation_progress[operation_id] = {
+        'status': 'pending',
+        'total_emails': len(students_for_email),
+        'sent_count': 0,
+        'failed_count': 0,
+        'progress_percentage': 0.0,
+        'errors': [],
+        'started_at': now_utc(),
+        'completed_at': None
+    }
+    
+    # For custom bulk emails, we'll need to extend the email service
+    # For now, use the invitation template with custom message
+    
+    # Start background email sending
+    background_tasks.add_task(
+        send_bulk_emails_background,
+        operation_id,
+        students_for_email,
+        course_name,
+        1  # 1 second delay between emails
+    )
+    
+    return {
+        'operation_id': operation_id,
+        'total_emails': len(students_for_email),
+        'subject': request.subject,
+        'course_name': course_name,
+        'message': f'Custom emails are being sent to {len(students_for_email)} recipients'
+    }
+
+
+@router.patch("/{student_id}/email-status")
+def update_student_email_status(
+    student_id: str,
+    email_sent: Optional[bool] = None,
+    email_verified: Optional[bool] = None,
+    current_admin: User = Depends(get_current_admin),
+    session: Session = Depends(get_session)
+):
+    """Manually update student email status"""
+    
+    student = session.get(User, student_id)
+    if not student or student.role != UserRole.STUDENT:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Student not found"
+        )
+    
+    # Update email status fields
+    if email_sent is not None:
+        student.email_sent = email_sent
+        if email_sent:
+            student.invitation_sent_at = now_utc()
+    
+    if email_verified is not None:
+        student.email_verified = email_verified
+    
+    student.updated_at = now_utc()
+    
+    session.add(student)
+    session.commit()
+    session.refresh(student)
+    
+    return {
+        'student_id': student.id,
+        'email': student.email,
+        'email_sent': student.email_sent,
+        'email_verified': student.email_verified,
+        'updated_at': student.updated_at
+    }
 
 
 @router.get("/", response_model=List[StudentResponse])
