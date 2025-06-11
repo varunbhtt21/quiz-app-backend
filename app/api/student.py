@@ -482,6 +482,7 @@ def list_users(
             email=user.email,
             role=user.role,
             is_active=user.is_active,
+            registration_status=user.registration_status,
             created_at=user.created_at,
             updated_at=user.updated_at
         )
@@ -525,6 +526,7 @@ def create_student(
         email=student.email,
         role=student.role,
         is_active=student.is_active,
+        registration_status=student.registration_status,
         created_at=student.created_at,
         updated_at=student.updated_at
     )
@@ -549,6 +551,7 @@ def get_user(
         email=user.email,
         role=user.role,
         is_active=user.is_active,
+        registration_status=user.registration_status,
         created_at=user.created_at,
         updated_at=user.updated_at
     )
@@ -593,6 +596,7 @@ def update_user(
         email=user.email,
         role=user.role,
         is_active=user.is_active,
+        registration_status=user.registration_status,
         created_at=user.created_at,
         updated_at=user.updated_at
     )
