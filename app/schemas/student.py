@@ -36,7 +36,7 @@ class EnrolledStudentResponse(BaseModel):
     email: str
     is_active: bool
     enrolled_at: datetime
-    enrollment_active: bool
+    enrollment_active: bool 
 
 
 # Email Management Request/Response Models
