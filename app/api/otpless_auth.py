@@ -197,10 +197,41 @@ def complete_profile(
             existing_user = session.exec(statement).first()
             
             if existing_user:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Email already registered by another user"
-                )
+                # If the existing user is PENDING (bulk imported), merge accounts
+                if existing_user.registration_status == RegistrationStatus.PENDING:
+                    print(f"🔄 Merging OTP user with pre-registered student: {existing_user.email}")
+                    
+                    # Transfer data from current OTP user to the pre-registered user
+                    existing_user.otpless_user_id = current_user.otpless_user_id
+                    existing_user.mobile = current_user.mobile
+                    existing_user.name = profile_data.name
+                    existing_user.profile_picture = current_user.profile_picture
+                    existing_user.auth_provider = current_user.auth_provider
+                    existing_user.registration_status = RegistrationStatus.ACTIVE
+                    existing_user.profile_completed = True
+                    existing_user.updated_at = datetime.utcnow()
+                    
+                    # Update the user record
+                    session.add(existing_user)
+                    
+                    # Delete the temporary OTP user
+                    session.delete(current_user)
+                    session.commit()
+                    session.refresh(existing_user)
+                    
+                    print(f"✅ Successfully merged accounts for: {existing_user.email}")
+                    
+                    return ProfileCompletionResponse(
+                        success=True,
+                        message="Profile completed successfully! Your account has been linked to your pre-registered email.",
+                        user_id=existing_user.id
+                    )
+                else:
+                    # Email belongs to an active user - this is an error
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Email already registered by another user"
+                    )
         
         # Update user profile
         current_user.name = profile_data.name
@@ -226,6 +257,39 @@ def complete_profile(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to complete profile"
         )
+
+
+@router.post("/check-email")
+def check_email_status(
+    email_data: dict,
+    session: Session = Depends(get_session)
+):
+    """
+    Check if email is pre-registered (PENDING) for better UX in profile completion
+    """
+    email = email_data.get("email", "").strip()
+    
+    if not email:
+        return {"is_pre_registered": False, "status": "invalid"}
+    
+    statement = select(User).where(User.email == email)
+    existing_user = session.exec(statement).first()
+    
+    if not existing_user:
+        return {"is_pre_registered": False, "status": "available"}
+    
+    if existing_user.registration_status == RegistrationStatus.PENDING:
+        return {
+            "is_pre_registered": True, 
+            "status": "pending",
+            "message": "This email was pre-registered. Your account will be linked when you complete your profile."
+        }
+    else:
+        return {
+            "is_pre_registered": False, 
+            "status": "taken",
+            "message": "Email already registered by another user"
+        }
 
 
 @router.get("/me", response_model=OTPLESSUserResponse)
