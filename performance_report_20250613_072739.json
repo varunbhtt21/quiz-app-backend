@@ -1,0 +1,100 @@
+{
+  "timestamp": "2025-06-13T01:57:38.926864+00:00",
+  "database_pool": {
+    "pool_size": 20,
+    "checked_in": 0,
+    "checked_out": 0,
+    "overflow": -20,
+    "total_connections": 0,
+    "available_connections": 0,
+    "status": "healthy"
+  },
+  "cache_stats": {
+    "contest_cache": {
+      "total_entries": 1,
+      "active_entries": 1,
+      "expired_entries": 0,
+      "memory_usage_kb": 0.177734375
+    },
+    "user_cache": {
+      "total_entries": 0,
+      "active_entries": 0,
+      "expired_entries": 0,
+      "memory_usage_kb": 0.001953125
+    },
+    "course_cache": {
+      "total_entries": 0,
+      "active_entries": 0,
+      "expired_entries": 0,
+      "memory_usage_kb": 0.001953125
+    },
+    "submission_cache": {
+      "total_entries": 0,
+      "active_entries": 0,
+      "expired_entries": 0,
+      "memory_usage_kb": 0.001953125
+    },
+    "lru_cache_info": {
+      "user_role_cache": {
+        "hits": 0,
+        "misses": 0,
+        "maxsize": 1000,
+        "currsize": 0
+      },
+      "enrollment_cache": {
+        "hits": 0,
+        "misses": 0,
+        "maxsize": 500,
+        "currsize": 0
+      },
+      "contest_problems_cache": {
+        "hits": 0,
+        "misses": 0,
+        "maxsize": 200,
+        "currsize": 0
+      }
+    }
+  },
+  "system_health": {
+    "status": "healthy",
+    "timestamp": "2025-06-13T01:57:39.032020+00:00",
+    "issues": [],
+    "metrics": {
+      "cpu_percent": 49.4,
+      "memory_percent": 80.5,
+      "memory_used_mb": 3594.890625,
+      "requests_per_minute": 0,
+      "average_response_time_ms": 0.0,
+      "error_rate_percent": 0.0
+    },
+    "queue_stats": {
+      "queue_size": 0,
+      "max_size": 1000,
+      "processing": false,
+      "processed_count": 0,
+      "dropped_count": 0,
+      "queue_full": false
+    },
+    "performance_summary": {
+      "current": {
+        "cpu_percent": 49.4,
+        "memory_percent": 80.5,
+        "requests_per_minute": 0,
+        "average_response_time_ms": 0.0
+      },
+      "averages_5min": {
+        "cpu_percent": 43.699999999999996,
+        "memory_percent": 80.5,
+        "response_time_ms": 0.0
+      },
+      "peak_usage": {
+        "max_cpu": 49.4,
+        "max_memory": 80.5,
+        "max_response_time": 0.0
+      },
+      "total_requests": 0,
+      "error_rate": 0.0,
+      "uptime_seconds": 0.320433
+    }
+  }
+}

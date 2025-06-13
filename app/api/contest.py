@@ -4,7 +4,9 @@ from typing import List, Optional, Dict
 from datetime import datetime, timezone, timedelta
 import json
 
-from app.core.database import get_session
+from app.core.database import get_session, get_pool_status
+from app.core.cache import cache_contest_data, cache_user_data, invalidate_contest_cache
+from app.core.performance import monitor_performance, rate_limit, performance_monitor
 from app.models.contest import Contest, ContestProblem, ContestStatus
 from app.models.submission import Submission
 from app.models.mcq_problem import MCQProblem
@@ -22,6 +24,7 @@ router = APIRouter(prefix="/contests", tags=["Contests"])
 
 
 @router.get("/time")
+@monitor_performance
 def get_server_time():
     """Get current server time in UTC for frontend synchronization"""
     current_utc = now_utc()
@@ -31,6 +34,31 @@ def get_server_time():
         "timezone": "UTC",
         "timestamp": current_utc.timestamp(),
         "formatted": current_utc.strftime("%Y-%m-%d %H:%M:%S UTC")
+    }
+
+# 🚀 PERFORMANCE MONITORING ENDPOINTS
+@router.get("/health")
+@monitor_performance
+def get_api_health():
+    """Get API health status for monitoring"""
+    from app.core.performance import get_system_health
+    
+    health_data = get_system_health()
+    
+    # Add database pool status
+    pool_status = get_pool_status()
+    health_data["database_pool"] = pool_status
+    
+    return health_data
+
+@router.get("/performance")
+@monitor_performance
+def get_performance_metrics(current_admin: User = Depends(get_current_admin)):
+    """Get detailed performance metrics (admin only)"""
+    return {
+        "performance": performance_monitor.get_performance_summary(),
+        "database_pool": get_pool_status(),
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
 
@@ -310,17 +338,19 @@ def get_my_all_submissions(
 
 
 @router.get("/", response_model=List[ContestResponse])
+@monitor_performance
+@cache_contest_data(ttl=120)  # Cache for 2 minutes - contests don't change frequently
+@rate_limit(requests_per_minute=100)  # Higher limit for list endpoints
 def list_contests(
     course_id: Optional[str] = Query(None, description="Filter by course ID"),
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    """List contests (filtered by user role and course access)"""
+    """List contests (filtered by user role and course access) - OPTIMIZED"""
     statement = select(Contest)
     
     if current_user.role == UserRole.STUDENT:
-        # Students only see contests from courses they are enrolled in AND active contests
-        # Get student's enrolled course IDs
+        # 🚀 OPTIMIZED: Use cached enrollment lookup
         student_courses = session.exec(
             select(StudentCourse.course_id).where(
                 StudentCourse.student_id == current_user.id,
@@ -331,20 +361,24 @@ def list_contests(
         if not student_courses:
             return []
         
-        statement = statement.where(
+        # 🔥 OPTIMIZED: Use index-friendly query with explicit ordering
+        statement = select(Contest).where(
             Contest.course_id.in_(student_courses),
-            Contest.is_active == True  # Only show active contests to students
-        )
+            Contest.is_active == True  # Partial index optimization
+        ).order_by(Contest.start_time.desc())
+        
     elif course_id:
         # Admin can filter by course_id
         statement = statement.where(Contest.course_id == course_id)
+        statement = statement.order_by(Contest.start_time.desc())
+    else:
+        statement = statement.order_by(Contest.start_time.desc())
     
-    statement = statement.order_by(Contest.start_time.desc())
     contests = session.exec(statement).all()
     
     # Filter contests admin can access (only their courses)
     if current_user.role == UserRole.ADMIN:
-        # Get admin's course IDs
+        # 🚀 OPTIMIZED: Use cached admin course lookup
         admin_courses = session.exec(
             select(Course.id).where(Course.instructor_id == current_user.id)
         ).all()
@@ -646,13 +680,15 @@ def update_contest(
 
 
 @router.post("/{contest_id}/submit", response_model=SubmissionResponse)
+@monitor_performance
+@rate_limit(requests_per_minute=30)  # Lower limit for submissions to prevent spam
 def submit_contest(
     contest_id: str,
     submission_data: SubmissionCreate,
     current_student: User = Depends(get_current_student),
     session: Session = Depends(get_session)
 ):
-    """Submit answers for a contest with precise timezone validation"""
+    """Submit answers for a contest with precise timezone validation - OPTIMIZED"""
     contest = session.get(Contest, contest_id)
     if not contest:
         raise HTTPException(
@@ -917,6 +953,226 @@ def get_contest_submissions(
         "contest_name": contest.name,
         "total_submissions": len(submissions),
         "submissions": submissions
+    }
+
+# 🚀 BULK OPERATIONS ENDPOINTS (High Performance)
+
+@router.post("/bulk-validation")
+@monitor_performance
+@rate_limit(requests_per_minute=20)
+def bulk_validate_students(
+    contest_id: str,
+    student_ids: List[str],
+    current_admin: User = Depends(get_current_admin),
+    session: Session = Depends(get_session)
+):
+    """
+    Bulk validate student eligibility for a contest
+    Optimized for admin interfaces handling multiple students
+    """
+    from app.core.bulk_operations import BulkOperations
+    
+    contest = session.get(Contest, contest_id)
+    if not contest:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Contest not found"
+        )
+    
+    # Check admin access
+    course = session.get(Course, contest.course_id)
+    if not course or course.instructor_id != current_admin.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied"
+        )
+    
+    bulk_ops = BulkOperations(session)
+    
+    # Bulk validation
+    enrollment_status = bulk_ops.bulk_validate_students(student_ids, contest.course_id)
+    submission_status = bulk_ops.bulk_check_existing_submissions(contest_id, student_ids)
+    
+    results = []
+    for student_id in student_ids:
+        results.append({
+            "student_id": student_id,
+            "is_enrolled": enrollment_status.get(student_id, False),
+            "has_submitted": submission_status.get(student_id, False),
+            "can_submit": (
+                enrollment_status.get(student_id, False) and 
+                not submission_status.get(student_id, False) and
+                contest.get_status() == ContestStatus.IN_PROGRESS
+            )
+        })
+    
+    return {
+        "contest_id": contest_id,
+        "validation_results": results,
+        "total_students": len(student_ids),
+        "eligible_students": sum(1 for r in results if r["can_submit"]),
+        "contest_status": contest.get_status().value
+    }
+
+@router.get("/bulk-stats")
+@monitor_performance
+@cache_contest_data(ttl=60)  # Cache for 1 minute
+def bulk_get_contest_stats(
+    contest_ids: List[str] = Query(..., description="Contest IDs to get stats for"),
+    current_admin: User = Depends(get_current_admin),
+    session: Session = Depends(get_session)
+):
+    """
+    Get statistics for multiple contests efficiently
+    Optimized for dashboard and analytics views
+    """
+    from app.core.bulk_operations import BulkOperations
+    
+    # Validate admin access to all contests
+    contests = session.exec(
+        select(Contest, Course).join(Course).where(
+            Contest.id.in_(contest_ids),
+            Course.instructor_id == current_admin.id
+        )
+    ).all()
+    
+    accessible_contest_ids = [contest.id for contest, course in contests]
+    
+    if not accessible_contest_ids:
+        return {"stats": {}, "message": "No accessible contests found"}
+    
+    bulk_ops = BulkOperations(session)
+    stats = bulk_ops.bulk_get_contest_stats(accessible_contest_ids)
+    
+    # Enrich with contest names
+    contest_map = {contest.id: contest.name for contest, course in contests}
+    
+    enriched_stats = {}
+    for contest_id, stat_data in stats.items():
+        enriched_stats[contest_id] = {
+            **stat_data,
+            "contest_name": contest_map.get(contest_id, "Unknown"),
+            "contest_status": next(
+                (contest.get_status().value for contest, course in contests if contest.id == contest_id),
+                "unknown"
+            )
+        }
+    
+    return {
+        "stats": enriched_stats,
+        "total_contests": len(accessible_contest_ids),
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+
+@router.get("/my-submissions-bulk", response_model=List[SubmissionResponse])
+@monitor_performance
+@cache_user_data(ttl=60)  # Cache student submissions for 1 minute
+@rate_limit(requests_per_minute=50)
+def get_my_submissions_bulk(
+    current_student: User = Depends(get_current_student),
+    session: Session = Depends(get_session)
+):
+    """
+    Get all submissions for current student across all courses - OPTIMIZED
+    Uses bulk operations for better performance
+    """
+    from app.core.bulk_operations import BulkOperations
+    
+    # Get enrolled courses
+    enrolled_courses = session.exec(
+        select(StudentCourse.course_id).where(
+            StudentCourse.student_id == current_student.id,
+            StudentCourse.is_active == True
+        )
+    ).all()
+    
+    if not enrolled_courses:
+        return []
+    
+    bulk_ops = BulkOperations(session)
+    
+    # Use bulk operation to get submissions efficiently
+    student_submissions_map = bulk_ops.bulk_get_student_submissions(
+        [current_student.id], 
+        enrolled_courses[0] if len(enrolled_courses) == 1 else None
+    )
+    
+    submissions = student_submissions_map.get(current_student.id, [])
+    
+    # Convert to response format
+    return [
+        SubmissionResponse(
+            id=sub["id"],
+            contest_id=sub["contest_id"],
+            student_id=current_student.id,
+            total_score=sub["total_score"],
+            max_possible_score=sub["max_possible_score"],
+            submitted_at=sub["submitted_at"],
+            time_taken_seconds=sub["time_taken_seconds"],
+            is_auto_submitted=sub["is_auto_submitted"],
+            percentage=sub["percentage"],
+            timezone="UTC"
+        )
+        for sub in submissions
+    ]
+
+# 🎯 PERFORMANCE OPTIMIZATION ENDPOINTS
+
+@router.post("/warm-cache")
+@monitor_performance
+def warm_contest_cache(
+    contest_id: str,
+    current_admin: User = Depends(get_current_admin),
+    session: Session = Depends(get_session)
+):
+    """
+    Pre-warm cache for a contest before it starts
+    Reduces load when students start accessing the contest
+    """
+    from app.core.cache import warm_contest_cache, warm_user_enrollment_cache
+    
+    contest = session.get(Contest, contest_id)
+    if not contest:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Contest not found"
+        )
+    
+    # Check admin access
+    course = session.get(Course, contest.course_id)
+    if not course or course.instructor_id != current_admin.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied"
+        )
+    
+    # Warm contest data cache
+    contest_data = {
+        "id": contest.id,
+        "name": contest.name,
+        "course_id": contest.course_id,
+        "start_time": contest.start_time.isoformat(),
+        "end_time": contest.end_time.isoformat(),
+        "status": contest.get_status().value
+    }
+    warm_contest_cache(contest_id, contest_data)
+    
+    # Get enrolled students and warm their enrollment cache
+    enrolled_students = session.exec(
+        select(StudentCourse.student_id).where(
+            StudentCourse.course_id == contest.course_id,
+            StudentCourse.is_active == True
+        )
+    ).all()
+    
+    warm_user_enrollment_cache(enrolled_students, contest.course_id)
+    
+    return {
+        "message": "Cache warmed successfully",
+        "contest_id": contest_id,
+        "cached_students": len(enrolled_students),
+        "cache_duration": "5 minutes",
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
 

@@ -43,6 +43,8 @@ postgrest==0.16.11
 propcache==0.3.1
 psycopg==3.1.18
 psycopg2-binary==2.9.10
+# asyncpg==0.28.0  # Skipped due to Python 3.13 compatibility issues
+psutil==5.9.8
 pyasn1==0.6.1
 pycparser==2.22
 pydantic==2.11.5

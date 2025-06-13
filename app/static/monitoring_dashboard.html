@@ -1,0 +1,1114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🚀 System Monitoring Dashboard</title>
+    
+    <!-- Chart.js from CDN for beautiful charts -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        /* Header Section */
+        .header {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 25px;
+            margin-bottom: 30px;
+            text-align: center;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .header h1 {
+            color: white;
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+        }
+
+        .system-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 15px;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 15px 25px;
+            border-radius: 50px;
+            margin-top: 15px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+
+        .status-indicator {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .status-healthy { background: #10B981; }
+        .status-warning { background: #F59E0B; }
+        .status-critical { background: #EF4444; }
+
+        @keyframes pulse {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.1); opacity: 0.7; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        .last-updated {
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 0.9rem;
+            margin-top: 10px;
+        }
+
+        /* Metrics Grid */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 25px;
+            margin-bottom: 30px;
+        }
+
+        .metric-card {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 25px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+            cursor: help;
+        }
+
+        .metric-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+        }
+
+        .metric-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+        }
+
+        .metric-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .metric-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #374151;
+        }
+
+        .metric-icon {
+            font-size: 1.5rem;
+            filter: grayscale(0.3);
+        }
+
+        .metric-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 5px;
+        }
+
+        .metric-unit {
+            font-size: 1rem;
+            color: #6B7280;
+            margin-left: 5px;
+        }
+
+        .metric-trend {
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .trend-up { color: #EF4444; }
+        .trend-down { color: #10B981; }
+        .trend-stable { color: #6B7280; }
+
+        /* Charts Section */
+        .charts-section {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+        }
+
+        .charts-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 25px;
+        }
+
+        .charts-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #374151;
+        }
+
+        .time-selector {
+            display: flex;
+            gap: 10px;
+        }
+
+        .time-btn {
+            padding: 8px 16px;
+            border: 2px solid #E5E7EB;
+            background: white;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 500;
+        }
+
+        .time-btn.active,
+        .time-btn:hover {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 25px;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 300px;
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            border: 1px solid #E5E7EB;
+        }
+
+        .chart-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+
+        /* Capacity Analysis */
+        .capacity-section {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+        }
+
+        .capacity-header {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .capacity-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 25px;
+        }
+
+        .capacity-stat {
+            text-align: center;
+            padding: 20px;
+            background: #F9FAFB;
+            border-radius: 15px;
+            border: 1px solid #E5E7EB;
+        }
+
+        .capacity-stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+
+        .capacity-stat-label {
+            color: #6B7280;
+            font-size: 0.9rem;
+        }
+
+        .capacity-health-badge {
+            display: inline-block;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            margin-bottom: 25px;
+            margin-left: 20px;
+            transition: all 0.3s ease;
+        }
+
+        .capacity-health-badge.excellent {
+            background: linear-gradient(135deg, #10B981, #059669);
+            color: white;
+        }
+
+        .capacity-health-badge.good {
+            background: linear-gradient(135deg, #3B82F6, #1D4ED8);
+            color: white;
+        }
+
+        .capacity-health-badge.warning {
+            background: linear-gradient(135deg, #F59E0B, #D97706);
+            color: white;
+        }
+
+        .capacity-health-badge.critical {
+            background: linear-gradient(135deg, #EF4444, #DC2626);
+            color: white;
+        }
+
+        .capacity-breakdown {
+            background: linear-gradient(135deg, #F3F4F6, #E5E7EB);
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 25px;
+        }
+
+        .capacity-breakdown h3 {
+            color: #374151;
+            margin-bottom: 15px;
+            font-size: 1.2rem;
+        }
+
+        .capacity-info {
+            display: grid;
+            gap: 10px;
+        }
+
+        .info-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 15px;
+            background: rgba(255, 255, 255, 0.7);
+            border-radius: 10px;
+            font-size: 0.95rem;
+        }
+
+        .info-label {
+            font-weight: 600;
+        }
+
+        .info-value {
+            font-weight: 700;
+            color: #1F2937;
+        }
+
+        .recommendations {
+            background: #F0F9FF;
+            border: 1px solid #0EA5E9;
+            border-radius: 15px;
+            padding: 20px;
+        }
+
+        .recommendations h3 {
+            color: #0EA5E9;
+            margin-bottom: 15px;
+            font-size: 1.1rem;
+        }
+
+        .recommendation-item {
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(14, 165, 233, 0.1);
+            color: #374151;
+        }
+
+        .recommendation-item:last-child {
+            border-bottom: none;
+        }
+
+        /* Loading States */
+        .loading {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 200px;
+            font-size: 1.1rem;
+            color: #6B7280;
+        }
+
+        .spinner {
+            width: 30px;
+            height: 30px;
+            border: 3px solid #E5E7EB;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 15px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Error States */
+        .error {
+            background: #FEF2F2;
+            border: 1px solid #EF4444;
+            border-radius: 15px;
+            padding: 20px;
+            color: #DC2626;
+            text-align: center;
+        }
+
+        /* Tooltip Styles */
+        .tooltip {
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #1F2937;
+            color: white;
+            padding: 12px 16px;
+            border-radius: 10px;
+            font-size: 0.85rem;
+            line-height: 1.4;
+            width: 280px;
+            text-align: left;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+            z-index: 1000;
+            margin-bottom: 10px;
+        }
+
+        .tooltip::after {
+            content: '';
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            border: 8px solid transparent;
+            border-top-color: #1F2937;
+        }
+
+        .metric-card:hover .tooltip {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .tooltip h4 {
+            font-weight: 600;
+            margin-bottom: 6px;
+            color: #F59E0B;
+        }
+
+        .tooltip p {
+            margin-bottom: 4px;
+        }
+
+        .tooltip .example {
+            color: #9CA3AF;
+            font-style: italic;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .container {
+                padding: 15px;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+            
+            .metrics-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .charts-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .charts-header {
+                flex-direction: column;
+                gap: 15px;
+            }
+            
+            .capacity-stats {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header Section -->
+        <div class="header">
+            <h1>🚀 System Monitoring Dashboard</h1>
+            <div class="system-status">
+                <div id="status-indicator" class="status-indicator status-healthy"></div>
+                <span id="system-status-text">System Healthy</span>
+                <span id="health-score">• Score: 95/100</span>
+            </div>
+            <div class="last-updated">
+                Last updated: <span id="last-updated">--</span>
+            </div>
+        </div>
+
+        <!-- Real-time Metrics -->
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <div class="tooltip">
+                    <h4>💻 CPU Usage</h4>
+                    <p><strong>What it means:</strong> Percentage of processing power being used</p>
+                    <p><strong>Healthy range:</strong> 0-70%</p>
+                    <p><strong>Warning:</strong> >70% indicates high load</p>
+                    <p class="example">High CPU = Slower response times, potential timeouts</p>
+                </div>
+                <div class="metric-header">
+                    <span class="metric-title">CPU Usage</span>
+                    <span class="metric-icon">🖥️</span>
+                </div>
+                <div class="metric-value" id="cpu-value">--<span class="metric-unit">%</span></div>
+                <div class="metric-trend" id="cpu-trend">
+                    <span>📈</span> <span>Loading...</span>
+                </div>
+            </div>
+
+            <div class="metric-card">
+                <div class="tooltip">
+                    <h4>💾 Memory Usage</h4>
+                    <p><strong>What it means:</strong> Percentage of RAM being consumed</p>
+                    <p><strong>Healthy range:</strong> 0-75%</p>
+                    <p><strong>Warning:</strong> >80% may cause system slowdown</p>
+                    <p class="example">High memory = App crashes, slower database queries</p>
+                </div>
+                <div class="metric-header">
+                    <span class="metric-title">Memory Usage</span>
+                    <span class="metric-icon">💾</span>
+                </div>
+                <div class="metric-value" id="memory-value">--<span class="metric-unit">%</span></div>
+                <div class="metric-trend" id="memory-trend">
+                    <span>📈</span> <span>Loading...</span>
+                </div>
+            </div>
+
+            <div class="metric-card">
+                <div class="tooltip">
+                    <h4>👥 Active Users</h4>
+                    <p><strong>What it means:</strong> Number of users currently using the system</p>
+                    <p><strong>Includes:</strong> Students taking quizzes, admins managing content</p>
+                    <p><strong>Peak capacity:</strong> ~100 concurrent users (t3.medium)</p>
+                    <p class="example">High user count = More load on system resources</p>
+                </div>
+                <div class="metric-header">
+                    <span class="metric-title">Active Users</span>
+                    <span class="metric-icon">👥</span>
+                </div>
+                <div class="metric-value" id="users-value">--<span class="metric-unit">users</span></div>
+                <div class="metric-trend" id="users-trend">
+                    <span>📈</span> <span>Loading...</span>
+                </div>
+            </div>
+
+            <div class="metric-card">
+                <div class="tooltip">
+                    <h4>⚡ Response Time</h4>
+                    <p><strong>What it means:</strong> Average time for API requests to complete</p>
+                    <p><strong>Good performance:</strong> <200ms</p>
+                    <p><strong>Warning:</strong> >500ms indicates performance issues</p>
+                    <p class="example">High response time = Slow user experience, timeouts</p>
+                </div>
+                <div class="metric-header">
+                    <span class="metric-title">Response Time</span>
+                    <span class="metric-icon">⚡</span>
+                </div>
+                <div class="metric-value" id="response-value">--<span class="metric-unit">ms</span></div>
+                <div class="metric-trend" id="response-trend">
+                    <span>📈</span> <span>Loading...</span>
+                </div>
+            </div>
+
+            <div class="metric-card">
+                <div class="tooltip">
+                    <h4>🗄️ DB Connections</h4>
+                    <p><strong>What it means:</strong> Active database connections out of total pool</p>
+                    <p><strong>Pool size:</strong> 50 total connections (20 base + 30 overflow)</p>
+                    <p><strong>Warning:</strong> >40 connections may indicate bottleneck</p>
+                    <p class="example">High usage = Database queries waiting, slower responses</p>
+                </div>
+                <div class="metric-header">
+                    <span class="metric-title">DB Connections</span>
+                    <span class="metric-icon">🗄️</span>
+                </div>
+                <div class="metric-value" id="db-value">--<span class="metric-unit"></span></div>
+                <div class="metric-trend" id="db-trend">
+                    <span>📊</span> <span>Loading...</span>
+                </div>
+            </div>
+
+            <div class="metric-card">
+                <div class="tooltip">
+                    <h4>⚠️ Error Rate</h4>
+                    <p><strong>What it means:</strong> Percentage of requests that failed</p>
+                    <p><strong>Healthy range:</strong> 0-1%</p>
+                    <p><strong>Warning:</strong> >2% indicates system problems</p>
+                    <p class="example">High errors = Users can't submit quizzes, login failures</p>
+                </div>
+                <div class="metric-header">
+                    <span class="metric-title">Error Rate</span>
+                    <span class="metric-icon">⚠️</span>
+                </div>
+                <div class="metric-value" id="error-value">--<span class="metric-unit">%</span></div>
+                <div class="metric-trend" id="error-trend">
+                    <span>📈</span> <span>Loading...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Historical Charts -->
+        <div class="charts-section">
+            <div class="charts-header">
+                <h2 class="charts-title">📊 Performance Trends</h2>
+                <div class="time-selector">
+                    <button class="time-btn" onclick="changeTimeframe(1)">1H</button>
+                    <button class="time-btn active" onclick="changeTimeframe(4)">4H</button>
+                    <button class="time-btn" onclick="changeTimeframe(12)">12H</button>
+                    <button class="time-btn" onclick="changeTimeframe(24)">24H</button>
+                </div>
+            </div>
+            
+            <div class="charts-grid">
+                <div class="chart-container">
+                    <div class="chart-title">System Resources</div>
+                    <canvas id="systemChart"></canvas>
+                </div>
+                <div class="chart-container">
+                    <div class="chart-title">User Activity & Performance</div>
+                    <canvas id="performanceChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Capacity Analysis -->
+        <div class="capacity-section">
+            <h2 class="capacity-header">🎯 Capacity Analysis</h2>
+            <div class="capacity-health-badge" id="capacity-health-badge">
+                <span id="capacity-health-text">Loading...</span>
+            </div>
+            
+            <div class="capacity-stats">
+                <div class="capacity-stat">
+                    <div class="capacity-stat-value" id="current-users">--</div>
+                    <div class="capacity-stat-label">Current Users</div>
+                </div>
+                <div class="capacity-stat">
+                    <div class="capacity-stat-value" id="max-users">--</div>
+                    <div class="capacity-stat-label">Estimated Max Users</div>
+                </div>
+                <div class="capacity-stat">
+                    <div class="capacity-stat-value" id="peak-capacity">--</div>
+                    <div class="capacity-stat-label">Peak Capacity</div>
+                </div>
+                <div class="capacity-stat">
+                    <div class="capacity-stat-value" id="safe-capacity">--</div>
+                    <div class="capacity-stat-label">Safe Concurrent</div>
+                </div>
+                <div class="capacity-stat">
+                    <div class="capacity-stat-value" id="utilization">--%</div>
+                    <div class="capacity-stat-label">Utilization</div>
+                </div>
+                <div class="capacity-stat">
+                    <div class="capacity-stat-value" id="instance-type">--</div>
+                    <div class="capacity-stat-label">Instance Type</div>
+                </div>
+            </div>
+
+            <div class="capacity-breakdown">
+                <h3>📊 Capacity Breakdown</h3>
+                <div class="capacity-info">
+                    <div class="info-item">
+                        <span class="info-label">🟢 Safe Operation:</span>
+                        <span class="info-value" id="safe-range">0-40 users</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">🟡 Caution Zone:</span>
+                        <span class="info-value" id="caution-range">41-50 users</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">🔴 Critical Zone:</span>
+                        <span class="info-value" id="critical-range">51+ users</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="recommendations" id="recommendations">
+                <h3>💡 Scaling Recommendations</h3>
+                <div id="recommendations-list">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        Loading recommendations...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        let currentTimeframe = 4;
+        let systemChart, performanceChart;
+        // No authentication required - monitoring is public
+
+        // Initialize dashboard
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeDashboard();
+            startAutoRefresh();
+        });
+
+        async function initializeDashboard() {
+            try {
+                showLoading();
+                await loadDashboardData();
+                initializeCharts();
+                hideLoading();
+            } catch (error) {
+                console.error('Failed to initialize dashboard:', error);
+                showError('Failed to load dashboard data. Please check your connection and try again.');
+            }
+        }
+
+        async function loadDashboardData() {
+            try {
+                const response = await fetch('/api/monitoring/dashboard-data', {
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                updateMetrics(data.current);
+                updateCapacityAnalysis(data.capacity);
+                updateCharts(data.historical);
+                updateLastUpdated();
+                
+            } catch (error) {
+                console.error('Error loading dashboard data:', error);
+                throw error;
+            }
+        }
+
+        function updateMetrics(current) {
+            const metrics = current.metrics;
+            const healthStatus = current.health_status;
+
+            // Update metric values
+            document.getElementById('cpu-value').innerHTML = `${metrics.cpu_percent}<span class="metric-unit">%</span>`;
+            document.getElementById('memory-value').innerHTML = `${metrics.memory_percent}<span class="metric-unit">%</span>`;
+            document.getElementById('users-value').innerHTML = `${metrics.active_users}<span class="metric-unit">users</span>`;
+            document.getElementById('response-value').innerHTML = `${metrics.response_time_ms}<span class="metric-unit">ms</span>`;
+            document.getElementById('db-value').innerHTML = `${metrics.db_connections}<span class="metric-unit"></span>`;
+            document.getElementById('error-value').innerHTML = `${metrics.error_rate_percent}<span class="metric-unit">%</span>`;
+
+            // Update system status
+            updateSystemStatus(healthStatus);
+
+            // Update trends (simplified for now)
+            updateTrends(metrics);
+        }
+
+        function updateSystemStatus(healthStatus) {
+            const statusIndicator = document.getElementById('status-indicator');
+            const statusText = document.getElementById('system-status-text');
+            const healthScore = document.getElementById('health-score');
+
+            statusIndicator.className = `status-indicator status-${healthStatus.status}`;
+            
+            const statusTexts = {
+                'healthy': 'System Healthy',
+                'warning': 'System Warning',
+                'critical': 'System Critical'
+            };
+            
+            statusText.textContent = statusTexts[healthStatus.status] || 'System Unknown';
+            healthScore.textContent = `• Score: ${healthStatus.score}/100`;
+        }
+
+        function updateTrends(metrics) {
+            // Simple trend indicators (in a real app, you'd compare with previous values)
+            const trends = [
+                { id: 'cpu-trend', value: metrics.cpu_percent, threshold: 70 },
+                { id: 'memory-trend', value: metrics.memory_percent, threshold: 75 },
+                { id: 'users-trend', value: metrics.active_users, threshold: 80 },
+                { id: 'response-trend', value: metrics.response_time_ms, threshold: 500 },
+                { id: 'error-trend', value: metrics.error_rate_percent, threshold: 2 }
+            ];
+
+            trends.forEach(trend => {
+                const element = document.getElementById(trend.id);
+                const span = element.querySelector('span:last-child');
+                
+                if (trend.value > trend.threshold) {
+                    element.className = 'metric-trend trend-up';
+                    span.textContent = 'Above threshold';
+                } else if (trend.value < trend.threshold * 0.5) {
+                    element.className = 'metric-trend trend-down';
+                    span.textContent = 'Optimal';
+                } else {
+                    element.className = 'metric-trend trend-stable';
+                    span.textContent = 'Normal';
+                }
+            });
+
+            // Special case for DB connections
+            const dbTrend = document.getElementById('db-trend');
+            const dbSpan = dbTrend.querySelector('span:last-child');
+            dbTrend.className = 'metric-trend trend-stable';
+            dbSpan.textContent = 'Pool healthy';
+        }
+
+        function updateCapacityAnalysis(capacity) {
+            // Update capacity values
+            document.getElementById('current-users').textContent = capacity.current_users;
+            document.getElementById('max-users').textContent = capacity.estimated_max_users;
+            document.getElementById('utilization').textContent = `${capacity.utilization_percent}%`;
+            
+            // Update new capacity fields
+            if (capacity.predicted_peak_capacity) {
+                document.getElementById('peak-capacity').textContent = capacity.predicted_peak_capacity;
+            }
+            if (capacity.safe_concurrent_users) {
+                document.getElementById('safe-capacity').textContent = capacity.safe_concurrent_users;
+            }
+            if (capacity.instance_type) {
+                document.getElementById('instance-type').textContent = capacity.instance_type;
+            }
+
+            // Update capacity health badge
+            const healthBadge = document.getElementById('capacity-health-badge');
+            const healthText = document.getElementById('capacity-health-text');
+            
+            if (capacity.capacity_health) {
+                healthText.textContent = capacity.capacity_health;
+                healthBadge.className = `capacity-health-badge ${capacity.capacity_health.toLowerCase()}`;
+            }
+
+            // Update capacity breakdown ranges
+            const safeMax = Math.floor(capacity.safe_concurrent_users || capacity.estimated_max_users * 0.8);
+            const cautionMax = Math.floor(capacity.estimated_max_users || 50);
+            
+            document.getElementById('safe-range').textContent = `0-${safeMax} users`;
+            document.getElementById('caution-range').textContent = `${safeMax + 1}-${cautionMax} users`;
+            document.getElementById('critical-range').textContent = `${cautionMax + 1}+ users`;
+
+            // Update recommendations
+            const recommendationsList = document.getElementById('recommendations-list');
+            recommendationsList.innerHTML = '';
+            
+            capacity.recommendations.forEach(rec => {
+                const div = document.createElement('div');
+                div.className = 'recommendation-item';
+                div.innerHTML = rec; // Use innerHTML to support emoji and formatting
+                recommendationsList.appendChild(div);
+            });
+        }
+
+        function initializeCharts() {
+            // System Resources Chart
+            const systemCtx = document.getElementById('systemChart').getContext('2d');
+            systemChart = new Chart(systemCtx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        {
+                            label: 'CPU %',
+                            data: [],
+                            borderColor: '#EF4444',
+                            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                            tension: 0.4,
+                            fill: true
+                        },
+                        {
+                            label: 'Memory %',
+                            data: [],
+                            borderColor: '#3B82F6',
+                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                            tension: 0.4,
+                            fill: true
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 100,
+                            grid: {
+                                color: 'rgba(0, 0, 0, 0.1)'
+                            }
+                        },
+                        x: {
+                            grid: {
+                                color: 'rgba(0, 0, 0, 0.1)'
+                            }
+                        }
+                    }
+                }
+            });
+
+            // Performance Chart
+            const performanceCtx = document.getElementById('performanceChart').getContext('2d');
+            performanceChart = new Chart(performanceCtx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        {
+                            label: 'Active Users',
+                            data: [],
+                            borderColor: '#10B981',
+                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                            tension: 0.4,
+                            yAxisID: 'y'
+                        },
+                        {
+                            label: 'Response Time (ms)',
+                            data: [],
+                            borderColor: '#F59E0B',
+                            backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                            tension: 0.4,
+                            yAxisID: 'y1'
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        }
+                    },
+                    scales: {
+                        y: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Users'
+                            },
+                            grid: {
+                                color: 'rgba(0, 0, 0, 0.1)'
+                            }
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Response Time (ms)'
+                            },
+                            grid: {
+                                drawOnChartArea: false,
+                            },
+                        },
+                        x: {
+                            grid: {
+                                color: 'rgba(0, 0, 0, 0.1)'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateCharts(historical) {
+            if (!historical || !historical.timestamps || historical.timestamps.length === 0) {
+                // Generate sample data if no historical data available
+                console.log('No historical data available, using sample data for demonstration');
+                const sampleData = generateSampleData(20); // 20 data points
+                updateChartsWithData(sampleData);
+                return;
+            }
+            
+            // Format timestamps for display
+            const labels = historical.timestamps.map(ts => {
+                const date = new Date(ts);
+                return date.toLocaleTimeString('en-US', { 
+                    hour: '2-digit', 
+                    minute: '2-digit' 
+                });
+            });
+
+            // Update system chart
+            systemChart.data.labels = labels;
+            systemChart.data.datasets[0].data = historical.cpu || [];
+            systemChart.data.datasets[1].data = historical.memory || [];
+            systemChart.update();
+
+            // Update performance chart
+            performanceChart.data.labels = labels;
+            performanceChart.data.datasets[0].data = historical.users || [];
+            performanceChart.data.datasets[1].data = historical.response_time || [];
+            performanceChart.update();
+        }
+
+        function generateSampleData(points) {
+            const now = new Date();
+            const data = {
+                timestamps: [],
+                cpu: [],
+                memory: [],
+                users: [],
+                response_time: []
+            };
+
+            for (let i = 0; i < points; i++) {
+                // Generate timestamps going back in time
+                const time = new Date(now.getTime() - (points - i) * 3 * 60000); // 3 minutes apart
+                data.timestamps.push(time.toLocaleTimeString('en-US', { 
+                    hour: '2-digit', 
+                    minute: '2-digit' 
+                }));
+                
+                // Generate realistic sample data with some variation
+                const baseTime = i / points;
+                data.cpu.push(Math.max(0, Math.min(100, 30 + Math.sin(baseTime * Math.PI * 2) * 20 + Math.random() * 10)));
+                data.memory.push(Math.max(0, Math.min(100, 45 + Math.sin(baseTime * Math.PI * 3) * 15 + Math.random() * 8)));
+                data.users.push(Math.max(0, Math.floor(3 + Math.sin(baseTime * Math.PI * 4) * 2 + Math.random() * 3)));
+                data.response_time.push(Math.max(50, 150 + Math.sin(baseTime * Math.PI * 2.5) * 50 + Math.random() * 30));
+            }
+
+            return data;
+        }
+
+        function updateChartsWithData(data) {
+            // Update system chart
+            systemChart.data.labels = data.timestamps;
+            systemChart.data.datasets[0].data = data.cpu;
+            systemChart.data.datasets[1].data = data.memory;
+            systemChart.update();
+
+            // Update performance chart
+            performanceChart.data.labels = data.timestamps;
+            performanceChart.data.datasets[0].data = data.users;
+            performanceChart.data.datasets[1].data = data.response_time;
+            performanceChart.update();
+        }
+
+        async function changeTimeframe(hours) {
+            currentTimeframe = hours;
+            
+            // Update active button
+            document.querySelectorAll('.time-btn').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+
+            try {
+                const response = await fetch(`/api/monitoring/historical/${hours}`, {
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    updateCharts(data);
+                }
+            } catch (error) {
+                console.error('Error changing timeframe:', error);
+            }
+        }
+
+        function startAutoRefresh() {
+            // Refresh every 30 seconds
+            setInterval(async () => {
+                try {
+                    await loadDashboardData();
+                } catch (error) {
+                    console.error('Auto-refresh failed:', error);
+                }
+            }, 30000);
+        }
+
+        function updateLastUpdated() {
+            const now = new Date();
+            document.getElementById('last-updated').textContent = now.toLocaleTimeString();
+        }
+
+        function showLoading() {
+            // Implementation for loading states
+        }
+
+        function hideLoading() {
+            // Implementation for hiding loading states
+        }
+
+        function showError(message) {
+            // Create error banner
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error';
+            errorDiv.textContent = message;
+            
+            const container = document.querySelector('.container');
+            container.insertBefore(errorDiv, container.firstChild);
+            
+            // Auto-remove after 5 seconds
+            setTimeout(() => {
+                errorDiv.remove();
+            }, 5000);
+        }
+
+        // Public monitoring dashboard - no authentication required
+    </script>
+</body>
+</html> 
