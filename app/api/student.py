@@ -479,7 +479,7 @@ def list_users(
     return [
         StudentResponse(
             id=user.id,
-            email=user.email,
+            email=user.email or f"user_{user.id[:8]}@pending.com",  # Provide fallback for null emails
             role=user.role,
             is_active=user.is_active,
             registration_status=user.registration_status,
@@ -874,14 +874,14 @@ def _delete_contest_problems(session: Session, contest_id: str):
 def download_student_template(
     current_admin: User = Depends(get_current_admin)
 ):
-    """Download CSV template for bulk student pre-registration (email only)"""
-    # Create clean CSV content for student pre-registration - only email needed
-    csv_content = """email
-student1@example.com
-student2@example.com
-student3@example.com
-student4@example.com
-student5@example.com"""
+    """Download CSV template for bulk student pre-registration (email and mobile)"""
+    # Create enhanced CSV content for student pre-registration - email and mobile required
+    csv_content = """email,mobile
+student1@example.com,+919876543210
+student2@example.com,+919876543211
+student3@example.com,+919876543212
+student4@example.com,+919876543213
+student5@example.com,+919876543214"""
     
     # Create CSV file
     output = BytesIO()
@@ -905,7 +905,7 @@ def bulk_import_students(
     current_admin: User = Depends(get_current_admin),
     session: Session = Depends(get_session)
 ):
-    """Bulk pre-register students from CSV file (email only, OTP authentication on first login)"""
+    """Bulk pre-register students from CSV file (email and mobile, OTPLESS authentication on first login)"""
     if not file.filename.endswith(('.csv', '.txt')):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -930,8 +930,8 @@ def bulk_import_students(
         header = lines[0].split(',')
         header = [col.strip().lower() for col in header]
         
-        # Validate required columns (only email needed for pre-registration)
-        required_columns = ['email']
+        # Validate required columns (email and mobile required for enhanced pre-registration)
+        required_columns = ['email', 'mobile']
         missing_columns = [col for col in required_columns if col not in header]
         if missing_columns:
             raise HTTPException(
@@ -941,6 +941,7 @@ def bulk_import_students(
         
         # Get column indices
         email_idx = header.index('email')
+        mobile_idx = header.index('mobile')
         
         # Process students (pre-registration only)
         results = {
@@ -956,12 +957,13 @@ def bulk_import_students(
                 # Split CSV line (simple split, doesn't handle quoted commas)
                 columns = [col.strip() for col in line.split(',')]
                 
-                if len(columns) < email_idx + 1:
+                if len(columns) < max(email_idx + 1, mobile_idx + 1):
                     results["errors"].append(f"Row {line_num}: Not enough columns in row")
                     results["failed"] += 1
                     continue
                 
                 email = columns[email_idx].strip().lower()
+                mobile = columns[mobile_idx].strip()
                 
                 # Validate email format
                 if '@' not in email or '.' not in email:
@@ -969,24 +971,54 @@ def bulk_import_students(
                     results["failed"] += 1
                     continue
                 
+                # Validate mobile format (basic validation)
+                if not mobile or len(mobile) < 10:
+                    results["errors"].append(f"Row {line_num}: Invalid mobile format '{mobile}' (minimum 10 digits)")
+                    results["failed"] += 1
+                    continue
+                
+                # Clean mobile number (remove spaces, ensure + prefix for international)
+                mobile_clean = mobile.replace(' ', '').replace('-', '')
+                if not mobile_clean.startswith('+'):
+                    # Assume Indian number if no country code
+                    mobile_clean = '+91' + mobile_clean.lstrip('0')
+                
+                # Validate cleaned mobile
+                if len(mobile_clean) < 12 or not mobile_clean[1:].isdigit():
+                    results["errors"].append(f"Row {line_num}: Invalid mobile format '{mobile}' after cleaning")
+                    results["failed"] += 1
+                    continue
+                
                 # Check if email already exists
-                existing_user = session.exec(
+                existing_user_email = session.exec(
                     select(User).where(User.email == email)
                 ).first()
                 
-                if existing_user:
+                if existing_user_email:
                     results["errors"].append(f"Row {line_num}: Email '{email}' already exists")
                     results["failed"] += 1
                     continue
                 
-                # Create pre-registered student (no password, PENDING status)
+                # Check if mobile already exists
+                existing_user_mobile = session.exec(
+                    select(User).where(User.mobile == mobile_clean)
+                ).first()
+                
+                if existing_user_mobile:
+                    results["errors"].append(f"Row {line_num}: Mobile '{mobile_clean}' already exists")
+                    results["failed"] += 1
+                    continue
+                
+                # Create pre-registered student (no password, PENDING status, with mobile)
                 user = User(
                     email=email,
-                    hashed_password=None,  # No password - will use OTP authentication
+                    mobile=mobile_clean,  # Store cleaned mobile number
+                    hashed_password=None,  # No password - will use OTPLESS authentication
                     role=UserRole.STUDENT,
-                    auth_provider="otpless_mobile",  # Will use OTP authentication
+                    auth_provider="traditional",  # Will be updated to "otpless" when they first login
                     registration_status=RegistrationStatus.PENDING,  # Pre-registered, awaiting first login
-                    profile_completed=False  # Will complete profile on first login
+                    profile_completed=False,  # Will complete profile on first login
+                    verification_method=VerificationMethod.INVITED  # Invited by admin via bulk import
                 )
                 
                 session.add(user)
@@ -995,6 +1027,7 @@ def bulk_import_students(
                 results["preregistered_students"].append({
                     "id": user.id,
                     "email": user.email,
+                    "mobile": user.mobile,
                     "status": "pre-registered"
                 })
                 results["successful"] += 1

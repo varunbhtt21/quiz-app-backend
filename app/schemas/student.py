@@ -1,6 +1,6 @@
 from pydantic import BaseModel, EmailStr
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, date
 from app.models.user import UserRole, RegistrationStatus, VerificationMethod
 
 
@@ -81,6 +81,7 @@ class StudentWithEmailStatus(BaseModel):
     id: str
     email: str
     name: Optional[str] = None
+    date_of_birth: Optional[date] = None
     role: UserRole
     is_active: bool
     registration_status: RegistrationStatus

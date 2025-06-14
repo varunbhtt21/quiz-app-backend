@@ -2,8 +2,8 @@ from sqlmodel import SQLModel, Field
 from typing import Optional
 from enum import Enum
 import uuid
-from datetime import datetime, timezone
-from sqlalchemy import Column, DateTime
+from datetime import datetime, timezone, date
+from sqlalchemy import Column, DateTime, Date
 
 
 class UserRole(str, Enum):
@@ -36,6 +36,11 @@ class User(SQLModel, table=True):
     
     # Profile Information
     name: Optional[str] = Field(default=None)
+    date_of_birth: Optional[date] = Field(
+        default=None, 
+        sa_column=Column(Date, nullable=True),
+        description="Date of birth - optional in DB, mandatory in business logic"
+    )
     profile_picture: Optional[str] = Field(default=None)
     profile_completed: bool = Field(default=False)
     
@@ -68,6 +73,16 @@ class User(SQLModel, table=True):
         default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime(timezone=True), nullable=False)
     )
+    
+    # Enhanced profile completion check
+    def is_profile_complete_for_business_logic(self) -> bool:
+        """Check if profile meets business requirements (stricter than DB constraints)"""
+        return (
+            self.name is not None and
+            self.email is not None and
+            self.date_of_birth is not None and
+            self.profile_completed is True
+        )
     
     # Helper methods for email validation
     def is_email_invitation_pending(self) -> bool:

@@ -1,5 +1,6 @@
 from pydantic import BaseModel, EmailStr
 from typing import Optional, Dict, Any
+from datetime import datetime, date
 from app.models.user import UserRole, RegistrationStatus
 
 
@@ -14,6 +15,7 @@ class UserInfo(BaseModel):
     email: Optional[str] = None
     mobile: Optional[str] = None
     name: Optional[str] = None
+    date_of_birth: Optional[date] = None
     role: UserRole
     profile_completed: bool
     registration_status: RegistrationStatus = RegistrationStatus.ACTIVE
@@ -31,6 +33,7 @@ class ProfileCompletionRequest(BaseModel):
     """Request model for completing user profile"""
     name: str
     email: EmailStr
+    date_of_birth: date
 
 
 class ProfileCompletionResponse(BaseModel):
@@ -46,6 +49,7 @@ class OTPLESSUserResponse(BaseModel):
     email: Optional[str] = None
     mobile: Optional[str] = None
     name: Optional[str] = None
+    date_of_birth: Optional[date] = None
     profile_picture: Optional[str] = None
     role: UserRole
     auth_provider: str

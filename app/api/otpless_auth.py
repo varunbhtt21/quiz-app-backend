@@ -55,27 +55,32 @@ async def verify_otpless_token(
             if existing_user:
                 print(f"✅ Found existing user by OTPLESS ID: {existing_user.id}")
         
-        # If not found by OTPLESS ID, check by mobile or email
-        if not existing_user:
-            if user_data.get("mobile"):
-                print(f"🔍 Looking for user by mobile: {user_data.get('mobile')}")
-                statement = select(User).where(User.mobile == user_data["mobile"])
-                existing_user = session.exec(statement).first()
-                if existing_user:
-                    print(f"✅ Found existing user by mobile: {existing_user.id}")
-            elif user_data.get("email"):
-                print(f"🔍 Looking for user by email: {user_data.get('email')}")
-                statement = select(User).where(User.email == user_data["email"])
-                existing_user = session.exec(statement).first()
-                if existing_user:
-                    print(f"✅ Found existing user by email: {existing_user.id}")
+        # If not found by OTPLESS ID, check by mobile
+        if not existing_user and user_data.get("mobile"):
+            print(f"🔍 Looking for user by mobile: {user_data.get('mobile')}")
+            statement = select(User).where(User.mobile == user_data["mobile"])
+            existing_user = session.exec(statement).first()
+            if existing_user:
+                print(f"✅ Found existing user by mobile: {existing_user.id}")
+        
+        # If not found by mobile, check by email (important for bulk-imported users)
+        if not existing_user and user_data.get("email"):
+            print(f"🔍 Looking for user by email: {user_data.get('email')}")
+            statement = select(User).where(User.email == user_data["email"])
+            existing_user = session.exec(statement).first()
+            if existing_user:
+                print(f"✅ Found existing user by email: {existing_user.id}")
         
         # Handle pre-registered students (PENDING status)
         if existing_user and existing_user.registration_status == RegistrationStatus.PENDING:
             print(f"🔄 Activating pre-registered student: {existing_user.email}")
             # Update pre-registered user with OTPLESS data
             existing_user.otpless_user_id = user_data.get("otpless_user_id")
-            existing_user.mobile = user_data.get("mobile")
+            
+            # Keep existing mobile if provided during bulk import, otherwise use OTPLESS mobile
+            if not existing_user.mobile and user_data.get("mobile"):
+                existing_user.mobile = user_data.get("mobile")
+            
             if user_data.get("name"):
                 existing_user.name = user_data.get("name")
             existing_user.profile_picture = user_data.get("profile_picture")
@@ -88,6 +93,8 @@ async def verify_otpless_token(
             session.refresh(existing_user)
             user = existing_user
             print(f"✅ Activated pre-registered student: {user.id}")
+            print(f"📧 Email: {user.email}")
+            print(f"📱 Mobile: {user.mobile}")
             
         # Create new user if doesn't exist
         elif not existing_user:
@@ -127,16 +134,18 @@ async def verify_otpless_token(
             user = existing_user
             print(f"✅ Updated existing user: {user.id}")
         
-        # Check if profile completion is required
-        requires_profile_completion = not (user.name and user.email)
+        # Check if profile completion is required (using business logic validation)
+        requires_profile_completion = not user.is_profile_complete_for_business_logic()
         print(f"🔍 Profile completion required: {requires_profile_completion}")
+        print(f"🔍 User has name: {bool(user.name)}, email: {bool(user.email)}, date_of_birth: {bool(user.date_of_birth)}, profile_completed: {user.profile_completed}")
         
         # Create JWT token
         access_token = create_access_token(
             data={
                 "sub": user.id,
                 "role": user.role,
-                "profile_completed": user.profile_completed
+                "profile_completed": user.profile_completed,
+                "requires_profile_completion": requires_profile_completion
             }
         )
         
@@ -149,6 +158,7 @@ async def verify_otpless_token(
                 email=user.email,
                 mobile=user.mobile,
                 name=user.name,
+                date_of_birth=user.date_of_birth,
                 role=user.role,
                 profile_completed=user.profile_completed
             ),
@@ -181,11 +191,24 @@ def complete_profile(
     Complete user profile with name and email
     """
     try:
-        # Validate that user needs profile completion
-        if current_user.profile_completed:
+        # Validate that user needs profile completion (stricter validation)
+        if current_user.profile_completed and current_user.name and current_user.email:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Profile already completed"
+            )
+        
+        # Validate required fields
+        if not profile_data.name or not profile_data.name.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Name is required"
+            )
+        
+        if not profile_data.email or not profile_data.email.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email is required"
             )
         
         # Check if email is already taken by another user
@@ -205,6 +228,7 @@ def complete_profile(
                     existing_user.otpless_user_id = current_user.otpless_user_id
                     existing_user.mobile = current_user.mobile
                     existing_user.name = profile_data.name
+                    existing_user.date_of_birth = profile_data.date_of_birth
                     existing_user.profile_picture = current_user.profile_picture
                     existing_user.auth_provider = current_user.auth_provider
                     existing_user.registration_status = RegistrationStatus.ACTIVE
@@ -236,6 +260,7 @@ def complete_profile(
         # Update user profile
         current_user.name = profile_data.name
         current_user.email = profile_data.email
+        current_user.date_of_birth = profile_data.date_of_birth
         current_user.profile_completed = True
         current_user.updated_at = datetime.utcnow()
         
@@ -304,6 +329,7 @@ def get_current_otpless_user(
         email=current_user.email,
         mobile=current_user.mobile,
         name=current_user.name,
+        date_of_birth=current_user.date_of_birth,
         profile_picture=current_user.profile_picture,
         role=current_user.role,
         auth_provider=current_user.auth_provider,
