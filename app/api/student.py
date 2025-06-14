@@ -111,8 +111,12 @@ def get_students_with_email_status(
     current_admin: User = Depends(get_current_admin),
     session: Session = Depends(get_session)
 ):
-    """Get students with email status information"""
-    statement = select(User).where(User.role == UserRole.STUDENT)
+    """Get students with email status information (excludes users with NULL emails)"""
+    # Filter out users with NULL emails to prevent Pydantic validation errors
+    statement = select(User).where(
+        User.role == UserRole.STUDENT,
+        User.email.is_not(None)  # Exclude NULL emails
+    )
     
     # Apply search filter
     if search:
@@ -137,6 +141,7 @@ def get_students_with_email_status(
             id=student.id,
             email=student.email,
             name=student.name,
+            date_of_birth=student.date_of_birth,
             role=student.role,
             is_active=student.is_active,
             registration_status=student.registration_status,
@@ -874,8 +879,8 @@ def _delete_contest_problems(session: Session, contest_id: str):
 def download_student_template(
     current_admin: User = Depends(get_current_admin)
 ):
-    """Download CSV template for bulk student pre-registration (email and mobile)"""
-    # Create enhanced CSV content for student pre-registration - email and mobile required
+    """Download CSV template for bulk student pre-registration (email and mobile - BOTH MANDATORY)"""
+    # Create enhanced CSV content for student pre-registration - email and mobile BOTH REQUIRED
     csv_content = """email,mobile
 student1@example.com,+919876543210
 student2@example.com,+919876543211
@@ -905,7 +910,7 @@ def bulk_import_students(
     current_admin: User = Depends(get_current_admin),
     session: Session = Depends(get_session)
 ):
-    """Bulk pre-register students from CSV file (email and mobile, OTPLESS authentication on first login)"""
+    """Bulk pre-register students from CSV file (email and mobile BOTH MANDATORY, OTPLESS authentication on first login)"""
     if not file.filename.endswith(('.csv', '.txt')):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -930,7 +935,7 @@ def bulk_import_students(
         header = lines[0].split(',')
         header = [col.strip().lower() for col in header]
         
-        # Validate required columns (email and mobile required for enhanced pre-registration)
+        # Validate required columns (BOTH email and mobile are MANDATORY for enhanced pre-registration)
         required_columns = ['email', 'mobile']
         missing_columns = [col for col in required_columns if col not in header]
         if missing_columns:
@@ -965,6 +970,19 @@ def bulk_import_students(
                 email = columns[email_idx].strip().lower()
                 mobile = columns[mobile_idx].strip()
                 
+                # MANDATORY VALIDATION: Both email and mobile must be present and valid
+                # Check if email is empty or missing
+                if not email or email == '':
+                    results["errors"].append(f"Row {line_num}: Email is mandatory and cannot be empty")
+                    results["failed"] += 1
+                    continue
+                
+                # Check if mobile is empty or missing
+                if not mobile or mobile == '':
+                    results["errors"].append(f"Row {line_num}: Mobile number is mandatory and cannot be empty")
+                    results["failed"] += 1
+                    continue
+                
                 # Validate email format
                 if '@' not in email or '.' not in email:
                     results["errors"].append(f"Row {line_num}: Invalid email format '{email}'")
@@ -972,7 +990,7 @@ def bulk_import_students(
                     continue
                 
                 # Validate mobile format (basic validation)
-                if not mobile or len(mobile) < 10:
+                if len(mobile) < 10:
                     results["errors"].append(f"Row {line_num}: Invalid mobile format '{mobile}' (minimum 10 digits)")
                     results["failed"] += 1
                     continue

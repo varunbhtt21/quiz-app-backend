@@ -12,7 +12,7 @@ class StudentCreate(BaseModel):
 
 class StudentResponse(BaseModel):
     id: str
-    email: str
+    email: Optional[str] = None  # Made optional to handle NULL emails gracefully
     role: UserRole
     is_active: bool
     registration_status: RegistrationStatus = RegistrationStatus.ACTIVE
@@ -79,7 +79,7 @@ class EmailStatusResponse(BaseModel):
 class StudentWithEmailStatus(BaseModel):
     """Extended student response with email status"""
     id: str
-    email: str
+    email: Optional[str] = None  # Made optional to handle NULL emails gracefully
     name: Optional[str] = None
     date_of_birth: Optional[date] = None
     role: UserRole

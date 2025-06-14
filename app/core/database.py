@@ -1,8 +1,14 @@
+import time
+import logging
+from contextlib import contextmanager
 from sqlmodel import SQLModel, create_engine, Session
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import QueuePool
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from .config import settings
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 # Import models to ensure they are registered with SQLModel
 from app.models.user import User
@@ -62,8 +68,9 @@ engine = create_engine(
     connect_args={
         "options": "-c timezone=UTC",  # Force UTC timezone
         "connect_timeout": 10,         # Connection timeout
-        # Note: server_side_cursors and prepared_statement_cache_size 
-        # are not supported in psycopg3, removed for compatibility
+        # 🔧 PREPARED STATEMENT OPTIMIZATION - Disable to prevent conflicts
+        "prepare_threshold": None,     # Disable automatic prepared statements
+        "application_name": "quiz_app_main",  # Identify connections
     },
     
     # 🚀 EXECUTION OPTIONS
@@ -71,6 +78,8 @@ engine = create_engine(
         "isolation_level": "READ_COMMITTED",  # Optimal for high concurrency
         "autocommit": False,
         "compiled_cache": {},  # Enable query compilation cache
+        # 🔧 FORCE FRESH STATEMENTS to prevent prepared statement conflicts
+        "cache_size": 0,       # Disable statement cache to prevent conflicts
     }
 )
 
@@ -132,9 +141,8 @@ def create_db_and_tables():
 
 
 def get_session():
-    """Get database session with connection pooling"""
-    with Session(engine) as session:
-        yield session
+    """🚀 OPTIMIZED: Get database session with retry logic for prepared statement conflicts"""
+    yield from session_manager.get_session_with_retry()
 
 # 🚀 ASYNC SESSION SUPPORT for high-performance operations
 async def get_async_session():
@@ -164,4 +172,72 @@ def get_pool_status():
             "pool_size": getattr(pool, '_pool_size', 'unknown'),
             "status": f"monitoring_limited: {str(e)}",
             "total_connections": "unknown"
-        } 
+        }
+
+
+# 🚀 DATABASE SESSION MANAGER with retry logic for prepared statement conflicts
+class DatabaseSessionManager:
+    """Enhanced session manager with prepared statement conflict handling"""
+    
+    def __init__(self):
+        self.max_retries = 3
+        self.base_delay = 0.1
+    
+    def get_session_with_retry(self):
+        """Get session with retry logic for prepared statement conflicts"""
+        for attempt in range(self.max_retries):
+            try:
+                with Session(engine) as session:
+                    yield session
+                    break
+            except Exception as e:
+                error_msg = str(e).lower()
+                if "prepared statement" in error_msg and attempt < self.max_retries - 1:
+                    # Log the retry attempt
+                    logger.warning(f"Prepared statement conflict (attempt {attempt + 1}): {e}")
+                    # Exponential backoff
+                    delay = self.base_delay * (2 ** attempt)
+                    time.sleep(delay)
+                    continue
+                else:
+                    # Re-raise the exception if it's not a prepared statement issue
+                    # or if we've exhausted retries
+                    logger.error(f"Database session error: {e}")
+                    raise e
+
+
+@contextmanager
+def safe_database_operation(session: Session, operation_name: str):
+    """Context manager for safe database operations with error handling"""
+    try:
+        yield session
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "prepared statement" in error_msg:
+            logger.warning(f"Prepared statement conflict in {operation_name}: {e}")
+            # Force session rollback and cleanup
+            try:
+                session.rollback()
+            except:
+                pass  # Ignore rollback errors
+            try:
+                session.close()
+            except:
+                pass  # Ignore close errors
+            # Import here to avoid circular imports
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=503,
+                detail="Database temporarily unavailable due to high load, please retry"
+            )
+        else:
+            logger.error(f"Database error in {operation_name}: {e}")
+            try:
+                session.rollback()
+            except:
+                pass  # Ignore rollback errors
+            raise
+
+
+# Create global session manager instance
+session_manager = DatabaseSessionManager() 

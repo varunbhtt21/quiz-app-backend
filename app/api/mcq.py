@@ -1,15 +1,20 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
 from fastapi.responses import StreamingResponse
-from sqlmodel import Session, select, func
+from sqlmodel import Session, select, func, exists
 from typing import List, Optional
 from datetime import datetime
 from io import BytesIO
 import json
+import csv
+import io
+import os
+from uuid import uuid4
 
-from app.core.database import get_session
+from app.core.database import get_session, safe_database_operation
+from app.utils.auth import get_current_admin
+from app.models.user import User
 from app.models.mcq_problem import MCQProblem, QuestionType, ScoringType
 from app.models.tag import Tag, MCQTag
-from app.models.user import User
 from app.schemas.mcq import (
     MCQProblemCreate, 
     MCQProblemUpdate, 
@@ -18,7 +23,7 @@ from app.schemas.mcq import (
     MCQSearchFilters,
     TagInfo
 )
-from app.utils.auth import get_current_admin
+from app.core.config import settings
 
 router = APIRouter(prefix="/mcq", tags=["Questions"])
 
@@ -93,7 +98,7 @@ def create_question(
             question_type=problem_data.question_type,
             explanation=problem_data.explanation,
             created_by=current_admin.id,
-            needs_tags=False  # Manual creation always has tags
+            # 🔧 ARCHITECTURAL FIX: Remove database field - use runtime calculation only
         )
         
         # Set type-specific fields
@@ -152,7 +157,7 @@ def create_question(
             created_at=question.created_at,
             updated_at=question.updated_at,
             tags=tag_info,
-            needs_tags=question.needs_tags
+            needs_tags=len(tag_info) == 0  # 🔧 ARCHITECTURAL FIX: Use runtime calculation
         )
     
     except Exception as e:
@@ -176,7 +181,11 @@ def list_questions(
     current_admin: User = Depends(get_current_admin),
     session: Session = Depends(get_session)
 ):
-    """List questions with advanced filtering by tags, type, and tag status"""
+    """
+    🚀 OPTIMIZED: Fixed N+1 query problem with bulk tag loading
+    Get list of MCQ problems with their tags using efficient bulk queries
+    """
+    # Step 1: Build base query for MCQ problems
     statement = select(MCQProblem).distinct()
     
     if search:
@@ -187,9 +196,6 @@ def list_questions(
     
     if created_by:
         statement = statement.where(MCQProblem.created_by == created_by)
-    
-    if needs_tags is not None:
-        statement = statement.where(MCQProblem.needs_tags == needs_tags)
     
     if question_type is not None:
         statement = statement.where(MCQProblem.question_type == question_type)
@@ -206,20 +212,45 @@ def list_questions(
             Tag, MCQTag.tag_id == Tag.id
         ).where(Tag.name.in_(tag_name_list))
     
+    # 🔧 ARCHITECTURAL FIX: Handle needs_tags filter using runtime calculation
+    if needs_tags is not None:
+        if needs_tags:
+            # Questions that need tags (have no tags) - use NOT EXISTS for efficiency
+            subquery = select(MCQTag.mcq_id).where(MCQTag.mcq_id == MCQProblem.id)
+            statement = statement.where(~exists(subquery))
+        else:
+            # Questions that have tags - use EXISTS
+            subquery = select(MCQTag.mcq_id).where(MCQTag.mcq_id == MCQProblem.id)
+            statement = statement.where(exists(subquery))
+    
     statement = statement.offset(skip).limit(limit).order_by(MCQProblem.created_at.desc())
     problems = session.exec(statement).all()
     
-    # Get tags for each problem and build response
+    if not problems:
+        return []
+    
+    # Step 2: 🚀 BULK LOAD all tags for these problems (eliminates N+1 queries)
+    problem_ids = [p.id for p in problems]
+    tag_statement = (
+        select(MCQTag.mcq_id, Tag.id, Tag.name, Tag.color)
+        .join(Tag, MCQTag.tag_id == Tag.id)
+        .where(MCQTag.mcq_id.in_(problem_ids))
+    )
+    tag_results = session.exec(tag_statement).all()
+    
+    # Step 3: Group tags by MCQ ID for efficient lookup
+    tags_by_mcq = {}
+    for mcq_id, tag_id, tag_name, tag_color in tag_results:
+        if mcq_id not in tags_by_mcq:
+            tags_by_mcq[mcq_id] = []
+        tags_by_mcq[mcq_id].append(
+            TagInfo(id=tag_id, name=tag_name, color=tag_color)
+        )
+    
+    # Step 4: Build response with pre-loaded tags
     result = []
     for problem in problems:
-        tags = session.exec(
-            select(Tag).join(MCQTag, Tag.id == MCQTag.tag_id).where(MCQTag.mcq_id == problem.id)
-        ).all()
-        
-        tag_info = [
-            TagInfo(id=tag.id, name=tag.name, color=tag.color)
-            for tag in tags
-        ]
+        problem_tags = tags_by_mcq.get(problem.id, [])
         
         result.append(MCQProblemResponse(
             id=problem.id,
@@ -240,8 +271,8 @@ def list_questions(
             created_by=problem.created_by,
             created_at=problem.created_at,
             updated_at=problem.updated_at,
-            tags=tag_info,
-            needs_tags=problem.needs_tags
+            tags=problem_tags,
+            needs_tags=len(problem_tags) == 0
         ))
     
     return result
@@ -257,7 +288,7 @@ def list_questions_simplified(
     current_admin: User = Depends(get_current_admin),
     session: Session = Depends(get_session)
 ):
-    """Simplified list of questions for UI lists"""
+    """🚀 OPTIMIZED: Simplified list of questions for UI lists with bulk tag loading"""
     statement = select(MCQProblem).distinct()
     
     if search:
@@ -278,17 +309,31 @@ def list_questions_simplified(
     statement = statement.offset(skip).limit(limit).order_by(MCQProblem.created_at.desc())
     problems = session.exec(statement).all()
     
-    # Get tags for each problem
+    if not problems:
+        return []
+    
+    # 🚀 BULK LOAD all tags for these problems (eliminates N+1 queries)
+    problem_ids = [p.id for p in problems]
+    tag_statement = (
+        select(MCQTag.mcq_id, Tag.id, Tag.name, Tag.color)
+        .join(Tag, MCQTag.tag_id == Tag.id)
+        .where(MCQTag.mcq_id.in_(problem_ids))
+    )
+    tag_results = session.exec(tag_statement).all()
+    
+    # Group tags by MCQ ID for efficient lookup
+    tags_by_mcq = {}
+    for mcq_id, tag_id, tag_name, tag_color in tag_results:
+        if mcq_id not in tags_by_mcq:
+            tags_by_mcq[mcq_id] = []
+        tags_by_mcq[mcq_id].append(
+            TagInfo(id=tag_id, name=tag_name, color=tag_color)
+        )
+    
+    # Build response with pre-loaded tags
     result = []
     for problem in problems:
-        tags = session.exec(
-            select(Tag).join(MCQTag, Tag.id == MCQTag.tag_id).where(MCQTag.mcq_id == problem.id)
-        ).all()
-        
-        tag_info = [
-            TagInfo(id=tag.id, name=tag.name, color=tag.color)
-            for tag in tags
-        ]
+        problem_tags = tags_by_mcq.get(problem.id, [])
         
         result.append(MCQProblemListResponse(
             id=problem.id,
@@ -297,8 +342,8 @@ def list_questions_simplified(
             question_type=problem.question_type,
             image_url=problem.image_url,
             created_at=problem.created_at,
-            tags=tag_info,
-            needs_tags=problem.needs_tags
+            tags=problem_tags,
+            needs_tags=len(problem_tags) == 0
         ))
     
     return result
@@ -348,7 +393,7 @@ def get_mcq_problem(
         created_at=problem.created_at,
         updated_at=problem.updated_at,
         tags=tag_info,
-        needs_tags=problem.needs_tags
+        needs_tags=len(tag_info) == 0  # 🔧 ARCHITECTURAL FIX: Use runtime calculation
     )
 
 
@@ -429,11 +474,8 @@ def update_mcq_problem(
                 )
                 session.add(mcq_tag)
             
-            # Update needs_tags status based on whether tags are assigned
-            if problem_data.tag_ids:  # If tags are being assigned
-                problem.needs_tags = False
-            else:  # If all tags are being removed
-                problem.needs_tags = True
+            # 🔧 ARCHITECTURAL FIX: Remove database field update - use runtime calculation only
+            # Database field will be ignored in favor of runtime calculation
         
         session.add(problem)
         session.commit()
@@ -471,9 +513,9 @@ def update_mcq_problem(
             created_by=problem.created_by,
             created_at=problem.created_at,
             updated_at=problem.updated_at,
-            tags=tag_info,
-            needs_tags=problem.needs_tags
-        )
+                    tags=tag_info,
+        needs_tags=len(tag_info) == 0  # 🔧 ARCHITECTURAL FIX: Use runtime calculation
+    )
     
     except Exception as e:
         session.rollback()
@@ -721,8 +763,7 @@ def bulk_import_mcq_problems(
                     results["failed"] += 1
                     continue
                 
-                # Determine if MCQ needs tags (imported questions always need tags)
-                needs_tags = True  # All imported questions need tags assigned later
+                # 🔧 ARCHITECTURAL FIX: Remove database field usage - use runtime calculation only
                 
                 # Create MCQ problem
                 mcq_problem = MCQProblem(
@@ -735,7 +776,7 @@ def bulk_import_mcq_problems(
                     correct_options=json.dumps(correct_options),
                     explanation=explanation,
                     created_by=current_admin.id,
-                    needs_tags=needs_tags  # Mark as needing tags assignment
+                    # 🔧 ARCHITECTURAL FIX: Remove database field - use runtime calculation only
                 )
                 
                 session.add(mcq_problem)
