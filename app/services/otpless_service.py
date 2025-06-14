@@ -112,6 +112,16 @@ class OTPLESSService:
             print(f"  - Identity: {identity_type} = {identity_value}, verified: {is_verified}")
             
             if identity_type == "MOBILE" and identity_value:
+                print(f"📱 === OTPLESS MOBILE EXTRACTION DEBUG ===")
+                print(f"📱 Raw mobile from OTPLESS: '{identity_value}'")
+                print(f"📱 Mobile type: {type(identity_value)}")
+                print(f"📱 Mobile length: {len(identity_value)}")
+                print(f"📱 Mobile repr: {repr(identity_value)}")
+                print(f"📱 Mobile starts with +: {identity_value.startswith('+') if identity_value else False}")
+                print(f"📱 Mobile starts with +91: {identity_value.startswith('+91') if identity_value else False}")
+                print(f"📱 Mobile is verified: {is_verified}")
+                print(f"📱 =======================================")
+                
                 user_info["mobile"] = identity_value
                 user_info["auth_provider"] = "otpless_mobile"
                 if is_verified:

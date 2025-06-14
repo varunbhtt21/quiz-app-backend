@@ -11,6 +11,7 @@ import json
 from app.core.database import get_session
 from app.utils.auth import get_current_admin
 from app.utils.time_utils import now_utc  # Use UTC time utilities
+from app.utils.phone_utils import validate_and_normalize_mobile, MobileValidationError
 from app.core.security import get_password_hash
 from app.api.auth import generate_random_password
 from app.models.user import User, UserRole, RegistrationStatus, VerificationMethod
@@ -882,11 +883,11 @@ def download_student_template(
     """Download CSV template for bulk student pre-registration (email and mobile - BOTH MANDATORY)"""
     # Create enhanced CSV content for student pre-registration - email and mobile BOTH REQUIRED
     csv_content = """email,mobile
-student1@example.com,+919876543210
+student1@example.com,9876543210
 student2@example.com,+919876543211
-student3@example.com,+919876543212
-student4@example.com,+919876543213
-student5@example.com,+919876543214"""
+student3@example.com,919876543212
+student4@example.com,9876543213
+student5@example.com,+91-987-654-3214"""
     
     # Create CSV file
     output = BytesIO()
@@ -989,21 +990,11 @@ def bulk_import_students(
                     results["failed"] += 1
                     continue
                 
-                # Validate mobile format (basic validation)
-                if len(mobile) < 10:
-                    results["errors"].append(f"Row {line_num}: Invalid mobile format '{mobile}' (minimum 10 digits)")
-                    results["failed"] += 1
-                    continue
-                
-                # Clean mobile number (remove spaces, ensure + prefix for international)
-                mobile_clean = mobile.replace(' ', '').replace('-', '')
-                if not mobile_clean.startswith('+'):
-                    # Assume Indian number if no country code
-                    mobile_clean = '+91' + mobile_clean.lstrip('0')
-                
-                # Validate cleaned mobile
-                if len(mobile_clean) < 12 or not mobile_clean[1:].isdigit():
-                    results["errors"].append(f"Row {line_num}: Invalid mobile format '{mobile}' after cleaning")
+                # Normalize and validate mobile number using new utility
+                try:
+                    mobile_normalized, _ = validate_and_normalize_mobile(mobile, f"Row {line_num}")
+                except MobileValidationError as e:
+                    results["errors"].append(str(e))
                     results["failed"] += 1
                     continue
                 
@@ -1019,18 +1010,18 @@ def bulk_import_students(
                 
                 # Check if mobile already exists
                 existing_user_mobile = session.exec(
-                    select(User).where(User.mobile == mobile_clean)
+                    select(User).where(User.mobile == mobile_normalized)
                 ).first()
                 
                 if existing_user_mobile:
-                    results["errors"].append(f"Row {line_num}: Mobile '{mobile_clean}' already exists")
+                    results["errors"].append(f"Row {line_num}: Mobile '{mobile_normalized}' already exists")
                     results["failed"] += 1
                     continue
                 
                 # Create pre-registered student (no password, PENDING status, with mobile)
                 user = User(
                     email=email,
-                    mobile=mobile_clean,  # Store cleaned mobile number
+                    mobile=mobile_normalized,  # Store normalized 10-digit mobile number
                     hashed_password=None,  # No password - will use OTPLESS authentication
                     role=UserRole.STUDENT,
                     auth_provider="traditional",  # Will be updated to "otpless" when they first login
