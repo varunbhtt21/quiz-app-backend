@@ -675,6 +675,7 @@ def bulk_import_mcq_problems(
             "total_rows": len(lines) - 1,  # Exclude header
             "successful": 0,
             "failed": 0,
+            "duplicates": 0,
             "errors": [],
             "created_problems": [],
             "created_tags": []
@@ -764,6 +765,28 @@ def bulk_import_mcq_problems(
                     continue
                 
                 # 🔧 ARCHITECTURAL FIX: Remove database field usage - use runtime calculation only
+                # All imported questions need tags since they're imported without any tags
+                needs_tags = True
+                
+                # Check for duplicate questions based on content
+                correct_options_json = json.dumps(correct_options)
+                existing_question = session.exec(
+                    select(MCQProblem).where(
+                        MCQProblem.title == title,
+                        MCQProblem.description == description,
+                        MCQProblem.option_a == option_a,
+                        MCQProblem.option_b == option_b,
+                        MCQProblem.option_c == option_c,
+                        MCQProblem.option_d == option_d,
+                        MCQProblem.correct_options == correct_options_json
+                    )
+                ).first()
+                
+                if existing_question:
+                    results["errors"].append(f"Row {line_num}: Duplicate question found - '{title}' already exists with identical content")
+                    results["duplicates"] += 1
+                    results["failed"] += 1
+                    continue
                 
                 # Create MCQ problem
                 mcq_problem = MCQProblem(
@@ -773,7 +796,7 @@ def bulk_import_mcq_problems(
                     option_b=option_b,
                     option_c=option_c,
                     option_d=option_d,
-                    correct_options=json.dumps(correct_options),
+                    correct_options=correct_options_json,
                     explanation=explanation,
                     created_by=current_admin.id,
                     # 🔧 ARCHITECTURAL FIX: Remove database field - use runtime calculation only
