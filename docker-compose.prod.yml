@@ -9,6 +9,7 @@ services:
     restart: always
     ports:
       - "8000:8000"
+    command: ["gunicorn", "app.main:app", "-c", "gunicorn.conf.py"]
     environment:
       # Database Configuration
       - DATABASE_URL=${DATABASE_URL}

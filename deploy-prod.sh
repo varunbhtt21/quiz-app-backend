@@ -2,6 +2,7 @@
 
 echo "🚀 Starting Production Deployment..."
 echo "📁 Using: docker-compose.prod.yml"
+echo "⚡ Production Server: Gunicorn + 2 Uvicorn Workers"
 
 # Check if .env file exists
 if [ ! -f .env ]; then
@@ -51,6 +52,7 @@ docker-compose -f docker-compose.prod.yml pull || echo "ℹ️  No registry imag
 
 # Build and start services with production config
 echo "🔨 Building and starting production services..."
+echo "🏭 Server Configuration: Gunicorn with 2 Uvicorn workers"
 docker-compose -f docker-compose.prod.yml up --build -d
 
 # Wait for services to start
@@ -76,6 +78,7 @@ done
 echo "🎉 Production deployment completed!"
 echo "🔧 Backend API: $BACKEND_URL"
 echo "📚 API Docs: $BACKEND_URL/docs"
+echo "⚡ Server: Gunicorn + 2 Uvicorn Workers (Production Optimized)"
 
 echo ""
 echo "📋 Production management commands:"
