@@ -14,7 +14,13 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       - DIRECT_URL=${DIRECT_URL:-}
       
-      # Supabase Configuration  
+      # AWS S3 Configuration
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION:-ap-south-1}
+      - AWS_S3_BUCKET=${AWS_S3_BUCKET:-quiz-master-storage}
+      
+      # Supabase Configuration (Fallback)
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_KEY=${SUPABASE_KEY}
       - SUPABASE_STORAGE_BUCKET=${SUPABASE_STORAGE_BUCKET:-quiz-images}
@@ -53,8 +59,8 @@ services:
       - BCRYPT_ROUNDS=${BCRYPT_ROUNDS:-12}
       
     volumes:
-      # Mount uploads directory for file persistence
-      - ./uploads:/app/uploads
+      # Note: Image uploads now handled by S3/Supabase storage
+      # - ./uploads:/app/uploads  # Removed - using cloud storage
       
     networks:
       - quiz-network

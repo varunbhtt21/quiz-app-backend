@@ -22,12 +22,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Create uploads directory if it doesn't exist
-uploads_dir = Path("uploads")
-uploads_dir.mkdir(exist_ok=True)
-
-# Mount static files for uploads
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+# Note: Image uploads are now handled by S3/Supabase storage service
+# Local uploads directory and static file mounting removed in favor of cloud storage
 
 # Mount static files for monitoring dashboard
 app.mount("/static", StaticFiles(directory="app/static"), name="static")

@@ -541,11 +541,14 @@ def delete_mcq_problem(
     
     try:
         # Store image info for deletion after successful database operations
-        image_file_path = None
+        # Note: Images are now stored on S3, no local file deletion needed
+        should_delete_s3_image = False
+        s3_image_url = None
         if problem.image_url:
-            from pathlib import Path
-            filename = problem.image_url.split("/")[-1]
-            image_file_path = Path("uploads/mcq_images") / filename
+            # Check if this is an S3 image that needs to be deleted
+            if problem.image_url.startswith('http'):
+                should_delete_s3_image = True
+                s3_image_url = problem.image_url
         
         # Delete tag relationships first
         mcq_tags = session.exec(
@@ -564,15 +567,21 @@ def delete_mcq_problem(
         session.delete(problem)
         session.commit()
         
-        # Only delete image file AFTER successful database operations
-        if image_file_path and image_file_path.exists():
-            import os
+        # Delete S3/Supabase image AFTER successful database operations
+        if should_delete_s3_image and s3_image_url:
             try:
-                os.remove(image_file_path)
-                print(f"Deleted image file: {image_file_path}")
+                from app.services.storage import get_storage_service
+                storage_service = get_storage_service()
+                if storage_service:
+                    # Use the synchronous delete_image method
+                    success = storage_service.delete_image(s3_image_url)
+                    if success:
+                        print(f"Deleted storage image: {s3_image_url}")
+                    else:
+                        print(f"Warning: Could not delete storage image: {s3_image_url}")
             except Exception as img_error:
                 # Log the error but don't fail since database deletion succeeded
-                print(f"Warning: Failed to delete image file {image_file_path}: {str(img_error)}")
+                print(f"Warning: Failed to delete storage image {s3_image_url}: {str(img_error)}")
         
         return {
             "message": "MCQ problem, its tag relationships, and associated image deleted successfully"

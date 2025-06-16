@@ -37,9 +37,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Create uploads directory and set permissions
-RUN mkdir -p uploads \
-    && chown -R fastapi:fastapi /app
+# Note: Uploads directory removed - using cloud storage
+# Local uploads no longer needed with S3/Supabase storage
+RUN chown -R fastapi:fastapi /app
 
 # Switch to non-root user
 USER fastapi
