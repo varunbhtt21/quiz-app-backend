@@ -85,6 +85,7 @@ yarl==1.20.0
 
 # Production WSGI server
 gunicorn==21.2.0
+# bcrypt==3.2.2
 
 # AWS S3 Storage
 boto3==1.35.1
