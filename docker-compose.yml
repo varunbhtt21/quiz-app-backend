@@ -58,7 +58,7 @@ services:
       # Security
       - BCRYPT_ROUNDS=${BCRYPT_ROUNDS:-12}
       
-    volumes:
+    # volumes:
       # Note: Image uploads now handled by S3/Supabase storage
       # - ./uploads:/app/uploads  # Removed - using cloud storage
       
