@@ -189,7 +189,7 @@ class StorageService:
             return None
 
 
-# Create a singleton instance with error handling
+# Create a unified storage service that can use either Supabase or S3
 storage_service = None
 
 def get_storage_service():
@@ -197,23 +197,41 @@ def get_storage_service():
     global storage_service
     if storage_service is None:
         try:
+            # Try S3 first if configured
+            if settings.aws_access_key_id and settings.aws_secret_access_key:
+                from app.services.s3_storage import get_s3_storage_service
+                storage_service = get_s3_storage_service()
+                if storage_service:
+                    print("✅ Using S3 Storage")
+                    return storage_service
+            
+            # Fallback to Supabase if S3 not available
             if settings.supabase_url and settings.supabase_key:
                 storage_service = StorageService()
-                print("✅ Supabase Storage initialized successfully")
+                print("✅ Using Supabase Storage")
             else:
-                print("⚠️ Supabase Storage not configured (missing URL or key)")
+                print("⚠️ No storage configured (missing AWS or Supabase credentials)")
         except Exception as e:
-            print(f"❌ Failed to initialize Supabase Storage: {e}")
+            print(f"❌ Failed to initialize storage: {e}")
             print("🔄 App will continue without storage functionality")
             storage_service = None
     return storage_service
 
 # Try to initialize on import, but don't crash if it fails
 try:
-    if settings.supabase_url and settings.supabase_key:
+    # Try S3 first
+    if settings.aws_access_key_id and settings.aws_secret_access_key:
+        from app.services.s3_storage import get_s3_storage_service
+        storage_service = get_s3_storage_service()
+        if storage_service:
+            print("✅ S3 Storage initialized successfully")
+    # Fallback to Supabase
+    elif settings.supabase_url and settings.supabase_key:
         storage_service = StorageService()
         print("✅ Supabase Storage initialized successfully")
+    else:
+        print("⚠️ No storage service configured")
 except Exception as e:
-    print(f"⚠️ Supabase Storage initialization failed: {e}")
-    print("🔄 Storage will be disabled until dependency issues are resolved")
+    print(f"⚠️ Storage initialization failed: {e}")
+    print("🔄 Storage will be disabled until configuration issues are resolved")
     storage_service = None 

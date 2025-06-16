@@ -843,13 +843,13 @@ def bulk_import_mcq_problems(
 
 
 @router.post("/{problem_id}/upload-image")
-def upload_mcq_image(
+async def upload_mcq_image(
     problem_id: str,
     image: UploadFile = File(...),
     current_admin: User = Depends(get_current_admin),
     session: Session = Depends(get_session)
 ):
-    """Upload an image for an MCQ problem"""
+    """Upload an image for an MCQ problem using S3 storage"""
     # Check if problem exists
     problem = session.get(MCQProblem, problem_id)
     if not problem:
@@ -858,41 +858,26 @@ def upload_mcq_image(
             detail="MCQ problem not found"
         )
     
-    # Validate file type
-    if not image.content_type or not image.content_type.startswith("image/"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="File must be an image"
-        )
+    # Check if storage service is available
+    from app.services.storage import get_storage_service
+    storage_service = get_storage_service()
     
-    # Validate file size (5MB limit)
-    if image.size and image.size > 5 * 1024 * 1024:
+    if not storage_service:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Image size must be less than 5MB"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Storage service not configured"
         )
     
     try:
-        import os
-        import uuid
-        from pathlib import Path
+        # Delete old image if exists
+        if problem.image_url:
+            storage_service.delete_image(problem.image_url)
         
-        # Create uploads directory if it doesn't exist
-        upload_dir = Path("uploads/mcq_images")
-        upload_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Generate unique filename
-        file_extension = image.filename.split(".")[-1] if image.filename else "jpg"
-        unique_filename = f"{uuid.uuid4()}.{file_extension}"
-        file_path = upload_dir / unique_filename
-        
-        # Save the file
-        with open(file_path, "wb") as buffer:
-            content = image.file.read()
-            buffer.write(content)
+        # Upload new image to S3
+        image_url = await storage_service.upload_image(image, "mcq")
         
         # Update the problem with image URL
-        problem.image_url = f"/uploads/mcq_images/{unique_filename}"
+        problem.image_url = image_url
         session.commit()
         
         return {
@@ -900,6 +885,8 @@ def upload_mcq_image(
             "image_url": problem.image_url
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
         session.rollback()
         raise HTTPException(
@@ -914,7 +901,7 @@ def remove_mcq_image(
     current_admin: User = Depends(get_current_admin),
     session: Session = Depends(get_session)
 ):
-    """Remove the image from an MCQ problem"""
+    """Remove the image from an MCQ problem using S3 storage"""
     # Check if problem exists
     problem = session.get(MCQProblem, problem_id)
     if not problem:
@@ -923,18 +910,19 @@ def remove_mcq_image(
             detail="MCQ problem not found"
         )
     
+    if not problem.image_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="MCQ has no image to remove"
+        )
+    
     try:
-        # Remove file from disk if it exists
-        if problem.image_url:
-            import os
-            from pathlib import Path
-            
-            # Extract filename from URL
-            filename = problem.image_url.split("/")[-1]
-            file_path = Path("uploads/mcq_images") / filename
-            
-            if file_path.exists():
-                os.remove(file_path)
+        # Delete image from S3 storage
+        from app.services.storage import get_storage_service
+        storage_service = get_storage_service()
+        
+        if storage_service:
+            storage_service.delete_image(problem.image_url)
         
         # Remove image URL from database
         problem.image_url = None

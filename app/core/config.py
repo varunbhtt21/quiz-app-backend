@@ -12,6 +12,12 @@ class Settings(BaseSettings):
     supabase_key: str = ""
     supabase_storage_bucket: str = "quiz-images"
     
+    # AWS S3 Configuration
+    aws_access_key_id: str = ""
+    aws_secret_access_key: str = ""
+    aws_region: str = "ap-south-1"
+    aws_s3_bucket: str = "quiz-master-storage"
+    
     # JWT Configuration
     jwt_secret_key: str = "your-super-secret-jwt-key-change-this-in-production"
     jwt_algorithm: str = "HS256"
