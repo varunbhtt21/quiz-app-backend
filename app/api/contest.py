@@ -972,6 +972,7 @@ def get_contest_submissions(
         submissions.append({
             "id": submission.id,
             "student_email": student.email,
+            "student_name": student.name,
             "student_id": student.id,
             "total_score": submission.total_score,
             "max_possible_score": submission.max_possible_score,
