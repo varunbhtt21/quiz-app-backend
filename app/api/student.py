@@ -538,6 +538,94 @@ def create_student(
     )
 
 
+@router.post("/create-preregistered", response_model=StudentResponse)
+async def create_preregistered_student(
+    student_data: dict,
+    background_tasks: BackgroundTasks,
+    current_admin: User = Depends(get_current_admin),
+    session: Session = Depends(get_session)
+):
+    """Create a pre-registered student with email and mobile"""
+    email = student_data.get('email')
+    mobile = student_data.get('mobile')
+    
+    if not email or not mobile:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email and mobile number are required"
+        )
+    
+    # Normalize and validate mobile number
+    try:
+        mobile_normalized, _ = validate_and_normalize_mobile(mobile, "Create User")
+    except MobileValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    
+    # Check if email already exists
+    statement = select(User).where(User.email == email)
+    existing_user_email = session.exec(statement).first()
+    
+    if existing_user_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered"
+        )
+    
+    # Check if mobile already exists
+    statement = select(User).where(User.mobile == mobile_normalized)
+    existing_user_mobile = session.exec(statement).first()
+    
+    if existing_user_mobile:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Mobile number already registered"
+        )
+    
+    # Create pre-registered student
+    student = User(
+        email=email,
+        mobile=mobile_normalized,
+        hashed_password=None,  # No password - will use OTPLESS
+        role=UserRole.STUDENT,
+        auth_provider="traditional",  # Will be updated to "otpless" on first login
+        registration_status=RegistrationStatus.PENDING,
+        profile_completed=False,
+        verification_method=VerificationMethod.INVITED
+    )
+    
+    session.add(student)
+    session.commit()
+    session.refresh(student)
+    
+    # Send invitation email in background
+    from app.services.email_service import email_service
+    
+    async def send_invitation_task():
+        try:
+            await email_service.send_invitation_email(
+                to_email=email,
+                student_name=email.split('@')[0],  # Use email prefix as temporary name
+                course_name=None
+            )
+        except Exception as e:
+            print(f"Failed to send invitation email to {email}: {e}")
+    
+    background_tasks.add_task(send_invitation_task)
+    
+    return StudentResponse(
+        id=student.id,
+        email=student.email,
+        role=student.role,
+        is_active=student.is_active,
+        registration_status=student.registration_status,
+        created_at=student.created_at,
+        updated_at=student.updated_at
+    )
+
+
 @router.get("/{student_id}", response_model=StudentResponse)
 def get_user(
     student_id: str,
