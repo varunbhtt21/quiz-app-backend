@@ -57,38 +57,55 @@ async def send_bulk_emails_background(
     try:
         update_progress(operation_id, status="in_progress")
         
-        for i, student in enumerate(students):
-            try:
-                success = await email_service.send_invitation_email(
-                    to_email=student['email'],
-                    student_name=student.get('name', 'Student'),
-                    course_name=course_name
-                )
-                
-                if success:
-                    current_sent = email_operation_progress[operation_id].get('sent_count', 0)
-                    update_progress(operation_id, sent_count=current_sent + 1)
-                else:
+        # Get a new database session for the background task
+        from app.core.database import get_session
+        session = next(get_session())
+        
+        try:
+            for i, student in enumerate(students):
+                try:
+                    success = await email_service.send_invitation_email(
+                        to_email=student['email'],
+                        student_name=student.get('name', 'Student'),
+                        course_name=course_name
+                    )
+                    
+                    if success:
+                        # Update user email status in database
+                        user = session.exec(select(User).where(User.email == student['email'])).first()
+                        if user:
+                            user.email_sent = True
+                            user.invitation_sent_at = now_utc()
+                            user.updated_at = now_utc()
+                            session.add(user)
+                            session.commit()
+                        
+                        current_sent = email_operation_progress[operation_id].get('sent_count', 0)
+                        update_progress(operation_id, sent_count=current_sent + 1)
+                    else:
+                        current_failed = email_operation_progress[operation_id].get('failed_count', 0)
+                        errors = email_operation_progress[operation_id].get('errors', [])
+                        errors.append(f"Failed to send email to {student['email']}")
+                        update_progress(operation_id, failed_count=current_failed + 1, errors=errors)
+                    
+                    # Delay between emails to avoid rate limiting
+                    if i < len(students) - 1:  # Don't delay after the last email
+                        await asyncio.sleep(delay_seconds)
+                        
+                except Exception as e:
                     current_failed = email_operation_progress[operation_id].get('failed_count', 0)
                     errors = email_operation_progress[operation_id].get('errors', [])
-                    errors.append(f"Failed to send email to {student['email']}")
+                    errors.append(f"Error sending to {student['email']}: {str(e)}")
                     update_progress(operation_id, failed_count=current_failed + 1, errors=errors)
-                
-                # Delay between emails to avoid rate limiting
-                if i < len(students) - 1:  # Don't delay after the last email
-                    await asyncio.sleep(delay_seconds)
-                    
-            except Exception as e:
-                current_failed = email_operation_progress[operation_id].get('failed_count', 0)
-                errors = email_operation_progress[operation_id].get('errors', [])
-                errors.append(f"Error sending to {student['email']}: {str(e)}")
-                update_progress(operation_id, failed_count=current_failed + 1, errors=errors)
-        
-        update_progress(
-            operation_id, 
-            status="completed", 
-            completed_at=now_utc()
-        )
+            
+            update_progress(
+                operation_id, 
+                status="completed", 
+                completed_at=now_utc()
+            )
+            
+        finally:
+            session.close()
         
     except Exception as e:
         errors = email_operation_progress[operation_id].get('errors', [])
@@ -605,11 +622,27 @@ async def create_preregistered_student(
     
     async def send_invitation_task():
         try:
-            await email_service.send_invitation_email(
+            success = await email_service.send_invitation_email(
                 to_email=email,
                 student_name=email.split('@')[0],  # Use email prefix as temporary name
                 course_name=None
             )
+            
+            if success:
+                # Update user email status in database
+                from app.core.database import get_session
+                session = next(get_session())
+                try:
+                    user = session.exec(select(User).where(User.email == email)).first()
+                    if user:
+                        user.email_sent = True
+                        user.invitation_sent_at = now_utc()
+                        user.updated_at = now_utc()
+                        session.add(user)
+                        session.commit()
+                finally:
+                    session.close()
+                    
         except Exception as e:
             print(f"Failed to send invitation email to {email}: {e}")
     
