@@ -19,6 +19,8 @@ from app.schemas.contest import (
 )
 from app.utils.auth import get_current_admin, get_current_user, get_current_student
 from app.utils.time_utils import utc_timestamp_ms, now_utc, to_utc, parse_iso_to_utc
+from app.utils.scoring import calculate_keyword_score, ScoringResult
+from app.models.mcq_problem import ScoringType
 
 router = APIRouter(prefix="/contests", tags=["Contests"])
 
@@ -841,11 +843,6 @@ def submit_contest(
             
         else:
             # Long Answer scoring logic
-            # For now, Long Answer questions need manual scoring
-            # So we set score to 0 and mark for manual review
-            score = 0.0
-            correct_options_for_response = []
-            
             # Validate student answer format for Long Answer
             if not isinstance(student_answer, str):
                 raise HTTPException(
@@ -853,14 +850,50 @@ def submit_contest(
                     detail=f"Answer for Long Answer problem {problem.id} must be a string"
                 )
             
-            # Mark submission for manual review if it contains long answers
-            # (This will be handled after the loop)
+            correct_options_for_response = []
+            
+            # Implement keyword-based scoring if configured
+            if problem.scoring_type == ScoringType.KEYWORD_BASED and problem.keywords_for_scoring:
+                try:
+                    scoring_result = calculate_keyword_score(
+                        student_answer, 
+                        problem.keywords_for_scoring, 
+                        problem.marks
+                    )
+                    score = scoring_result.score
+                    
+                    # Store keyword analysis for review
+                    keyword_analysis = {
+                        "found_keywords": scoring_result.found_keywords,
+                        "missing_keywords": scoring_result.missing_keywords,
+                        "match_details": scoring_result.match_details,
+                        "auto_scored": True,
+                        "scoring_method": "keyword_based"
+                    }
+                    
+                except Exception as e:
+                    # If keyword scoring fails, fall back to manual review
+                    print(f"Keyword scoring failed for problem {problem.id}: {str(e)}")
+                    score = 0.0
+                    keyword_analysis = {
+                        "error": str(e),
+                        "auto_scored": False,
+                        "scoring_method": "manual_fallback"
+                    }
+            else:
+                # Manual review required
+                score = 0.0
+                keyword_analysis = {
+                    "auto_scored": False,
+                    "scoring_method": "manual"
+                }
         
         problem_scores[problem.id] = {
             "score": score,
             "max_score": problem.marks,
             "student_answer": student_answer,
-            "correct_answer": correct_options_for_response
+            "correct_answer": correct_options_for_response,
+            "keyword_analysis": keyword_analysis if problem.question_type.value == "long_answer" else None
         }
     
     # Log submission statistics for potential analysis
@@ -1467,19 +1500,51 @@ def auto_submit_contest(
             correct_options_for_response = correct_options
             
         else:
-            # Long Answer auto-submission - no scoring, just preserve answer
-            score = 0.0
+            # Long Answer auto-submission
             correct_options_for_response = []
             
             # For Long Answer, student_answer should be a string
             if not isinstance(student_answer, str):
                 student_answer = ""
+            
+            # Apply keyword scoring if configured
+            if problem.scoring_type == ScoringType.KEYWORD_BASED and problem.keywords_for_scoring:
+                try:
+                    scoring_result = calculate_keyword_score(
+                        student_answer, 
+                        problem.keywords_for_scoring, 
+                        problem.marks
+                    )
+                    score = scoring_result.score
+                    
+                    keyword_analysis = {
+                        "found_keywords": scoring_result.found_keywords,
+                        "missing_keywords": scoring_result.missing_keywords,
+                        "match_details": scoring_result.match_details,
+                        "auto_scored": True,
+                        "scoring_method": "keyword_based"
+                    }
+                    
+                except Exception as e:
+                    score = 0.0
+                    keyword_analysis = {
+                        "error": str(e),
+                        "auto_scored": False,
+                        "scoring_method": "manual_fallback"
+                    }
+            else:
+                score = 0.0
+                keyword_analysis = {
+                    "auto_scored": False,
+                    "scoring_method": "manual"
+                }
         
         problem_scores[problem.id] = {
             "score": score,
             "max_score": problem.marks,
             "student_answer": student_answer,
-            "correct_answer": correct_options_for_response
+            "correct_answer": correct_options_for_response,
+            "keyword_analysis": keyword_analysis if problem.question_type.value == "long_answer" else None
         }
     
     # Create auto-submission with timezone-aware timestamp

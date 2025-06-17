@@ -4,7 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from app.core.config import settings
 from app.core.database import create_db_and_tables
-from app.api import auth, course, contest, export, student, otpless_auth, tag, mcq, email, monitoring
+from app.api import auth, course, contest, export, student, otpless_auth, tag, mcq, email, monitoring, submission_review
 
 # Create FastAPI app
 app = FastAPI(
@@ -37,6 +37,7 @@ app.include_router(course.router, prefix="/api")
 app.include_router(contest.router, prefix="/api")
 app.include_router(export.router, prefix="/api")
 app.include_router(student.router, prefix="/api/students", tags=["Students"])
+app.include_router(submission_review.router, prefix="/api")  # Submission review endpoints
 app.include_router(email.router)  # Email service endpoints
 app.include_router(monitoring.router, prefix="/api")  # Monitoring endpoints
 
