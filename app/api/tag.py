@@ -53,7 +53,8 @@ def create_tag(
         created_by=tag.created_by,
         created_at=tag.created_at,
         updated_at=tag.updated_at,
-        mcq_count=0
+        mcq_count=0,
+        question_count=0
     )
 
 
@@ -67,7 +68,7 @@ def list_tags(
     session: Session = Depends(get_session)
 ):
     """List all tags with optional search and filtering"""
-    statement = select(Tag, func.count(MCQTag.mcq_id).label("mcq_count")).outerjoin(
+    statement = select(Tag, func.count(MCQTag.mcq_id).label("question_count")).outerjoin(
         MCQTag, Tag.id == MCQTag.tag_id
     ).group_by(Tag.id)
     
@@ -92,9 +93,10 @@ def list_tags(
             created_by=tag.created_by,
             created_at=tag.created_at,
             updated_at=tag.updated_at,
-            mcq_count=mcq_count
+            mcq_count=question_count,  # Backend compatibility: mcq_count field contains all question types
+            question_count=question_count  # New field for frontend compatibility
         )
-        for tag, mcq_count in results
+        for tag, question_count in results
     ]
 
 
@@ -203,7 +205,8 @@ def update_tag(
         created_by=tag.created_by,
         created_at=tag.created_at,
         updated_at=tag.updated_at,
-        mcq_count=mcq_count
+        mcq_count=mcq_count,
+        question_count=mcq_count
     )
 
 

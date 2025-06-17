@@ -23,7 +23,16 @@ class TagResponse(BaseModel):
     created_by: str
     created_at: datetime
     updated_at: datetime
-    mcq_count: Optional[int] = Field(None, description="Number of MCQs with this tag")
+    mcq_count: Optional[int] = Field(None, description="Number of questions with this tag (all types)")
+    question_count: Optional[int] = Field(None, description="Number of questions with this tag (alias for mcq_count)")
+    
+    def __init__(self, **data):
+        # Ensure question_count matches mcq_count for backward compatibility
+        if 'mcq_count' in data and 'question_count' not in data:
+            data['question_count'] = data['mcq_count']
+        elif 'question_count' in data and 'mcq_count' not in data:
+            data['mcq_count'] = data['question_count']
+        super().__init__(**data)
 
 
 class TagWithMCQs(TagResponse):
